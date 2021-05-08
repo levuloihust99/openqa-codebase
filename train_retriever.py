@@ -157,7 +157,7 @@ def dist_train_step(element):
             loss = loss_fn(q_tensors, ctx_tensors)
             loss = tf.nn.compute_average_loss(loss, global_batch_size=args.batch_size * strategy.num_replicas_in_sync)
 
-        grads = optimizer.gradient(loss, retriever.trainable_weights)
+        grads = tape.gradient(loss, retriever.trainable_weights)
         grads = [tf.clip_by_norm(g, args.max_grad_norm) for g in grads]
         optimizer.apply_gradients(zip(grads, retriever.trainable_weights))
 
