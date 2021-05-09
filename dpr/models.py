@@ -13,8 +13,9 @@ class BiEncoder(keras.Model):
         self,
         question_model: TFBertModel,
         ctx_model: TFBertModel,
+        **kwargs
     ):
-        super(BiEncoder, self).__init__()
+        super(BiEncoder, self).__init__(**kwargs)
         self.question_model = question_model
         self.ctx_model = ctx_model
     

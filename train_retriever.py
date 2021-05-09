@@ -106,14 +106,14 @@ with strategy.scope():
     question_encoder = TFBertModel.from_pretrained(
         'bert-base-uncased',
         config=config,
-        trainable=args.question_encoder_trainable
+        trainable=args.question_encoder_trainable,
     )
 
     # Instantiate context encoder
     context_encoder = TFBertModel.from_pretrained(
         'bert-base-uncased',
         config=config,
-        trainable=args.ctx_encoder_trainable
+        trainable=args.ctx_encoder_trainable,
     )
 
     retriever = models.BiEncoder(
@@ -133,7 +133,7 @@ with strategy.scope():
     )
 
     # Define loss function
-    loss_fn = losses.dpr_loss
+    loss_fn = losses.DPRLoss(batch_size=args.batch_size)
 
 
 """
@@ -152,7 +152,8 @@ def dist_train_step(element):
                 question_ids=element['question_ids'],
                 question_masks=element['question_masks'],
                 context_ids=element['context_ids'],
-                context_masks=element['context_masks']
+                context_masks=element['context_masks'],
+                training=True
             )
             loss = loss_fn(q_tensors, ctx_tensors)
             loss = tf.nn.compute_average_loss(loss, global_batch_size=args.batch_size * strategy.num_replicas_in_sync)
