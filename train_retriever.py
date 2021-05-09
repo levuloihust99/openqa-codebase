@@ -33,6 +33,7 @@ parser.add_argument("--max-query-length", type=int, default=const.MAX_QUERY_LENG
 parser.add_argument("--batch-size", type=int, default=const.BATCH_SIZE, help="Batch size on each compute device")
 parser.add_argument("--epochs", type=int, default=const.EPOCHS)
 parser.add_argument("--learning-rate", type=float, default=const.LEARNING_RATE)
+parser.add_argument("--warmup-steps", type=int, default=const.WARMUP_STEPS)
 parser.add_argument("--adam-eps", type=float, default=const.ADAM_EPS)
 parser.add_argument("--adam-betas", type=eval, default=const.ADAM_BETAS)
 parser.add_argument("--weight-decay", type=float, default=const.WEIGHT_DECAY)
@@ -124,6 +125,7 @@ with strategy.scope():
     # Instantiate the optimizer
     optimizer = optimizers.get_adamw(
         steps_per_epoch=steps_per_epoch,
+        warmup_steps=args.warmup_steps,
         epochs=args.epochs,
         learning_rate=args.learning_rate,
         eps=args.adam_eps,

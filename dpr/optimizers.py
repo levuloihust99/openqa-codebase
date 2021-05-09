@@ -10,6 +10,7 @@ from typing import Dict
 def get_adamw(
     epochs: int = 40,
     steps_per_epoch: int = 918,
+    warmup_steps: int = 100,
     learning_rate: float = 2e-5,
     weight_decay: float = 0.01,
     eps: float = 1e-8,
@@ -24,7 +25,6 @@ def get_adamw(
         end_learning_rate=0
     )
 
-    warmup_steps = num_train_steps * 0.1
     warmup_schedule = nlp.optimization.WarmUp(
         initial_learning_rate=learning_rate,
         decay_schedule_fn = decay_schedule,
