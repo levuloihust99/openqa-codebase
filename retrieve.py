@@ -21,7 +21,7 @@ parser.add_argument("--query-path", type=str, default="data/qas/nq-test.csv", he
 parser.add_argument("--ctx-source-path", type=str, default="data/wikipedia_split/psgs_w100.tsv", help="Path to the file containg all passages")
 parser.add_argument("--checkpoint-path", type=str, default="checkpoints", help="Path to the checkpointed model")
 parser.add_argument("--top-k", type=int, default=100, help="Number of documents that expects to be returned by retriever")
-parser.add_argument("--batch-size", type=int, default=8, help="Batch size when embedding questions")
+parser.add_argument("--batch-size", type=int, default=16, help="Batch size when embedding questions")
 parser.add_argument("--index-path", type=str, default="indexer", help="Path to indexed database")
 
 args = parser.parse_args()
@@ -29,14 +29,13 @@ args = parser.parse_args()
 """
 Create index
 """
-print("Creating index... ", end="")
-sys.stdout.flush()
+print("Creating index... ")
 
 index_path = args.index_path
 indexer = DenseFlatIndexer(buffer_size=50000)
 
 if args.create_index:
-
+    print("Load and embed vectors... ")
     # Load embeddings
     ctx_embedding_path_pattern = "data/retriever_results/wikipedia_passages_{}.pkl"
     embedding_files = [ctx_embedding_path_pattern.format(i) for i in range(500)]
@@ -54,7 +53,12 @@ if args.create_index:
     # Write index to disk
     indexer.serialize(index_path)
 else:
+    print("Deserializing index from disk... ")
     indexer.deserialize(index_path)
+
+print("Indexing data done !")
+if args.create_index:
+    exit(0)
 
 print("Number of vectors: {}".format(indexer.index.ntotal))
 print("done !")
@@ -121,7 +125,7 @@ text_dataset = tf.data.Dataset.from_tensor_slices(questions)
 def transform_to_tensors(
     dataset: tf.data.Dataset,
     tokenizer: BertTokenizer,
-    max_query_length: int = 32,
+    max_query_length: int = 256,
 ):
 
     def _generate():
@@ -210,7 +214,7 @@ Save search results to disk
 """
 print("Save search results... ")
 
-out_dir = "search_results"
+out_dir = "results/cache/search_results"
 out_path = os.path.join(out_dir, "top_ids_and_scores.pkl")
 
 with open(out_path, "wb") as writer:
