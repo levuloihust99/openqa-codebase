@@ -87,7 +87,7 @@ def main(called_as_module: bool = False, **kwargs):
                                                 })
 
         tokenizer = BertTokenizer.from_pretrained(args.bert_pretrained_model)
-        dataset = dataloader.transform_to_tensors(dataset, tokenizer)
+        dataset = dataloader.transform_retriever_text_data_to_tensors(dataset, tokenizer)
         dataset = dataset.map(
             lambda x: tf.py_function(func=_serialize_int_tensor,
                                     inp=[x['question_tensor'][0], x['positive_tensor'][0], x['hard_negative_tensor'][0]], 
