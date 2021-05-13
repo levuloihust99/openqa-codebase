@@ -4,15 +4,13 @@ import argparse
 
 from transformers.models.bert.tokenization_bert import BertTokenizer
 
-from ..const import SHUFFLE_SEED, SHUFFLE
 from ..utils.tensorizers import Tensorizer
 
 
-tf.random.set_seed(SHUFFLE_SEED)
-
-
 def load_retriever_tfrecord_text_data(
-    input_path: str
+    data_path: str,
+    shuffle: bool = True,
+    shuffle_seed: int = 123
 ):
     """Deserialize text data from `.tfrecord` file
 
@@ -20,7 +18,7 @@ def load_retriever_tfrecord_text_data(
         input_path (str): Path to the `.tfrecord` file that contains serialized text data
     """
 
-    dataset_stage_1 = tf.data.Dataset.list_files("{}/*".format(input_path), shuffle=SHUFFLE, seed=SHUFFLE_SEED)
+    dataset_stage_1 = tf.data.Dataset.list_files("{}/*".format(input_path), shuffle=shuffle, seed=shuffle_seed)
     dataset_stage_1 = dataset_stage_1.interleave(
         lambda x: tf.data.TFRecordDataset(x),
         num_parallel_calls=tf.data.AUTOTUNE,
@@ -193,7 +191,7 @@ def transform_retriever_data_from_text_to_int(
     )
 
 
-def serialize(
+def serialize_retriever_int_data(
     dataset: tf.data.Dataset
 ):
     def _serialize(record):
@@ -225,9 +223,11 @@ def serialize(
 
 
 def load_retriever_tfrecord_int_data(
-    input_path: str
+    data_path: str,
+    shuffle: bool = True,
+    shuffle_seed: int = 123
 ):
-    dataset = tf.data.Dataset.list_files("{}/*".format(input_path), shuffle=SHUFFLE, seed=SHUFFLE_SEED)
+    dataset = tf.data.Dataset.list_files("{}/*".format(data_path), shuffle=shuffle, seed=shuffle_seed)
     dataset = dataset.interleave(
         lambda x: tf.data.TFRecordDataset(x),
         num_parallel_calls=tf.data.AUTOTUNE,
@@ -289,6 +289,58 @@ def load_retriever_tfrecord_int_data(
     return dataset
 
 
+def pad(
+    dataset: tf.data.Dataset,
+    sep_token_id: int = 102,
+    max_context_length: int = 256,
+    max_query_length: int = 256,
+):
+    def _map_fn(element):
+        question = element['question']
+        question = question[:max_query_length]
+        question = tf.pad(question, [[0, max_query_length - tf.shape(question)[0]]])
+        question = tf.expand_dims(question, axis=0)
+
+        positive_tensor  = element['positive_tensor']
+        positive_tensor  = tf.sparse.to_dense(positive_tensor)
+        positive_tensor  = positive_tensor[:, :max_context_length] # truncate
+        positive_tensor  = tf.pad(positive_tensor, [[0, 0], [0, max_context_length - tf.shape(positive_tensor)[1]]]) # padding
+        positive_shape   = tf.shape(positive_tensor)
+        positive_scatter = tf.scatter_nd(indices=[[positive_shape[1] - 1]], updates=[tf.ones(positive_shape[0], dtype=tf.bool)], shape=[positive_shape[1], positive_shape[0]])
+        positive_mask    = tf.transpose(positive_scatter, perm=[1, 0])
+        positive_tensor  = tf.where(positive_mask, sep_token_id, positive_tensor)
+
+        hard_negative_tensor  = element['hard_negative_tensor']
+        hard_negative_tensor  = tf.sparse.to_dense(hard_negative_tensor)
+        hard_negative_tensor  = hard_negative_tensor[:, :max_context_length] # truncate
+        hard_negative_tensor  = tf.pad(hard_negative_tensor, [[0, 0], [0, max_context_length - tf.shape(hard_negative_tensor)[1]]]) # padding
+        hard_negative_shape   = tf.shape(hard_negative_tensor)
+        hard_negative_scatter = tf.scatter_nd(indices=[[hard_negative_shape[1] - 1]], updates=[tf.ones(hard_negative_shape[0], dtype=tf.bool)], shape=[hard_negative_shape[1], hard_negative_shape[0]])
+        hard_negative_mask    = tf.cast(tf.transpose(hard_negative_scatter, perm=[1, 0]), dtype=tf.bool)
+        hard_negative_tensor  = tf.where(hard_negative_mask, sep_token_id, hard_negative_tensor)
+
+        target_scores = element['target_scores']
+        target_scores = tf.pad(target_scores, [[0, hard_negative_shape[0]]])
+        target_scores = tf.expand_dims(target_scores, axis=0)
+
+        question_mask = tf.cast(question > 0, tf.int32)
+        context_tensor = tf.concat([positive_tensor, hard_negative_tensor], axis=0)
+        context_mask = tf.cast(context_tensor > 0, tf.int32)
+
+        return {
+            'question_ids': question,
+            'question_masks': question_mask,
+            'context_ids': context_tensor,
+            'context_masks': context_mask,
+            'target_scores': target_scores
+        }
+
+    return dataset.map(
+        _map_fn,
+        num_parallel_calls=tf.data.AUTOTUNE
+    )
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--input-path', type=str, default="data/retriever/V2/N5000-INT")
@@ -296,6 +348,6 @@ if __name__ == '__main__':
 
     input_path = args.input_path
     dataset = load_retriever_tfrecord_int_data(
-        input_path=input_path
+        data_path=input_path
     )
     

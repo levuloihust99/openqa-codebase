@@ -5,6 +5,7 @@ import argparse
 from transformers import BertTokenizer
 
 from . import dataloader_v2
+from .. import const
 from ..utils.tensorizers import Tensorizer
 
 def build_tfrecord_text_data_from_jsonl(
@@ -85,6 +86,8 @@ def build_tfrecord_int_data_from_tfrecord_text_data(
     input_path: str,
     out_dir: str,
     records_per_file=5000,
+    shuffle: bool =  True,
+    shuffle_seed: int = 123
 ):
     """Create `.tfrecord` files that contains int data from `.tfrecord` files that contains text data.
 
@@ -93,7 +96,9 @@ def build_tfrecord_int_data_from_tfrecord_text_data(
         out_dir (str): Path to the directory that contains the output `.tfrecord` files.
     """
     dataset_initial = dataloader_v2.load_retriever_tfrecord_text_data(
-        input_path='data/retriever/V2/N5000-TEXT'
+        data_path=input_path,
+        shuffle=shuffle,
+        shuffle_seed=shuffle_seed
     )
     
     tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
@@ -104,7 +109,7 @@ def build_tfrecord_int_data_from_tfrecord_text_data(
         tensorizer
     )
 
-    dataset_final = dataloader_v2.serialize(dataset_intermediate)
+    dataset_final = dataloader_v2.serialize_retriever_int_data(dataset_intermediate)
 
     dataset = dataset_final.window(records_per_file)
 
@@ -123,15 +128,21 @@ if __name__ == "__main__":
     parser.add_argument("--input-path", type=str, default="data/retriever/V2/N5000-TEXT")
     parser.add_argument("--out-dir", type=str, default="data/retriever/V2/N5000-INT")
     parser.add_argument("--records-per-file", type=int, default=5000)
+    parser.add_argument('--shuffle', type=eval, default=const.SHUFFLE)
+    parser.add_argument('--shuffle-seed', type=int, default=const.SHUFFLE_SEED)
 
     args = parser.parse_args()
 
     input_path = args.input_path
     out_dir = args.out_dir
     records_per_file = args.records_per_file
+    shuffle = args.shuffle
+    shuffle_seed = args.shuffle_seed
 
     build_tfrecord_int_data_from_tfrecord_text_data(
         input_path=input_path,
         out_dir=out_dir,
-        records_per_file=records_per_file
+        records_per_file=records_per_file,
+        shuffle=shuffle,
+        shuffle_seed=shuffle_seed
     )
