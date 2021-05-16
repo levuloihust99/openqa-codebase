@@ -1,6 +1,7 @@
 import tensorflow as tf
 import time
 import argparse
+from tensorflow.python.ops.numpy_ops.np_math_ops import positive
 
 from transformers.models.bert.tokenization_bert import BertTokenizer
 
@@ -287,6 +288,52 @@ def load_retriever_tfrecord_int_data(
     )
 
     return dataset
+
+
+def random_sampling(
+    dataset: tf.data.Dataset,
+    samples: int = 50
+):
+    """Note: Length of `target_scores` must be less than `samples`. Perform after padding
+    """
+    def _map_fn(element):
+        context_ids = element['context_ids']
+        context_masks = element['context_masks']
+        target_scores = element['target_scores']
+        target_scores_squeeze = tf.squeeze(target_scores, axis=0)
+
+        upper_bound = tf.shape(target_scores_squeeze)[0]
+        lower_bound = tf.math.count_nonzero(target_scores_squeeze, dtype=tf.int32)
+
+        positive_indices = tf.range(1, lower_bound, dtype=tf.int32)
+        max_positives = samples - 10
+        positive_indices = tf.concat([[0], tf.random.shuffle(positive_indices)], axis=0)[:max_positives]
+        num_positives = tf.shape(positive_indices)[0]
+        
+        hard_negative_indices = tf.random.shuffle(tf.range(lower_bound, upper_bound, dtype=tf.int32))[:samples - num_positives]
+
+        indices = tf.concat([positive_indices, hard_negative_indices], axis=0)
+        indices = tf.expand_dims(indices, axis=1)
+
+        updates = tf.ones(tf.shape(indices)[0], dtype=tf.bool)
+        mask = tf.scatter_nd(indices=indices, updates=updates, shape=tf.shape(target_scores_squeeze))
+
+        context_ids = context_ids[mask]
+        context_masks = context_masks[mask]
+
+        target_scores = target_scores[:, :samples]
+
+        return {
+            **element,
+            'context_ids': context_ids,
+            'context_masks': context_masks,
+            'target_scores': target_scores
+        }
+
+    return dataset.map(
+        _map_fn,
+        num_parallel_calls=tf.data.AUTOTUNE
+    )
 
 
 def pad(

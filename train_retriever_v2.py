@@ -30,7 +30,6 @@ parser.add_argument("--train-data-size", type=int, default=const.TRAIN_DATA_SIZE
 parser.add_argument("--data-path", type=str, default=const.DATA_PATH, help="Path to the `.tfrecord` data. Data in this file is already preprocessed into tensor format")
 parser.add_argument("--max-context-length", type=int, default=const.MAX_CONTEXT_LENGTH, help="Maximum length of a document")
 parser.add_argument("--max-query-length", type=int, default=const.MAX_QUERY_LENGTH, help="Maximum length of a question")
-parser.add_argument("--batch-size", type=int, default=const.BATCH_SIZE, help="Batch size on each compute device")
 parser.add_argument("--epochs", type=int, default=const.EPOCHS)
 parser.add_argument("--learning-rate", type=float, default=const.LEARNING_RATE)
 parser.add_argument("--warmup-steps", type=int, default=const.WARMUP_STEPS)
@@ -43,6 +42,7 @@ parser.add_argument("--seed", type=int, default=const.SHUFFLE_SEED)
 parser.add_argument("--checkpoint-path", type=str, default=const.CHECKPOINT_PATH)
 parser.add_argument("--ctx-encoder-trainable", type=eval, default=const.CTX_ENCODER_TRAINABLE, help="Whether the context encoder's weights are trainable")
 parser.add_argument("--question-encoder-trainable", type=eval, default=const.QUESTION_ENCODER_TRAINABLE, help="Whether the question encoder's weights are trainable")
+parser.add_argument("--max-ctxs", type=int, default=50)
 
 args = parser.parse_args()
 epochs = args.epochs
@@ -73,10 +73,13 @@ dataset = dataloader_v2.pad(
     max_query_length=args.max_query_length
 )
 dataset = dataset.cache()
+dataset = dataloader_v2.random_sampling(
+    dataset,
+    samples=args.max_ctxs
+)
 dataset = dataset.shuffle(buffer_size=60000)
 dataset = dataset.repeat()
 dataset = dataset.prefetch(tf.data.AUTOTUNE)
-next(iter(dataset))
 print("done")
 print("-------------------------------------------------------------------------------------------------------------------------------------------------------------------------")
 
@@ -102,7 +105,7 @@ config = BertConfig.from_pretrained(
     return_dict=True,
 )
 
-steps_per_epoch = args.train_data_size // (strategy.num_replicas_in_sync * args.batch_size)
+steps_per_epoch = args.train_data_size // strategy.num_replicas_in_sync
 with strategy.scope():
     # Instantiate question encoder
     question_encoder = TFBertModel.from_pretrained(

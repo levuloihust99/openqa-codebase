@@ -135,7 +135,7 @@ with strategy.scope():
     )
 
     # Define loss function
-    loss_fn = losses.DPRLoss(batch_size=args.batch_size)
+    loss_fn = losses.InBatchDPRLoss(batch_size=args.batch_size)
 
 
 """
