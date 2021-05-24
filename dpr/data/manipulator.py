@@ -294,7 +294,7 @@ def pad(
 
         hard_negative_tensor = element['hard_negative_tensor']
         hard_negative_tensor = tf.sparse.to_dense(hard_negative_tensor)
-        hard_negative_tensor = hard_negative_tensor[:max_context_length] # truncating
+        hard_negative_tensor = hard_negative_tensor[:, :max_context_length] # truncating
         hard_negative_tensor = tf.pad(hard_negative_tensor, [[0, 0], [0, max_context_length - tf.shape(hard_negative_tensor)[1]]]) # padding
 
         contexts = tf.concat([positive_tensor, hard_negative_tensor], axis=0)
