@@ -186,7 +186,7 @@ def main():
             current_epoch = ckpt.current_epoch.numpy()
             print("Latest checkpoint restored -- Model trained for {} epochs".format(current_epoch))
         else:
-            print("Checkpoint not found.Train from scratch")
+            print("Checkpoint not found. Train from scratch")
             current_epoch = 0
 
 

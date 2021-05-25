@@ -1,7 +1,7 @@
 # global
 TRAIN_DATA_SIZE = 60000
 EPOCHS = 40
-BATCH_SIZE = 8
+BATCH_SIZE = 16
 
 # AdamW
 LEARNING_RATE = 2e-5
@@ -16,7 +16,7 @@ MAX_GRAD_NORM = 2.0
 # training
 CTX_ENCODER_TRAINABLE = True
 QUESTION_ENCODER_TRAINABLE = True
-CHECKPOINT_PATH = "gs://dpr/checkpoints/retriever/V3"
+CHECKPOINT_PATH = "gs://dpr/checkpoints/retriever/V3-tpu-cloud"
 DATA_PATH = "gs://dpr/data/retriever/V3/N5000-INT"
 SHUFFLE = True
 SHUFFLE_SEED = 123

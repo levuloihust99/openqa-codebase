@@ -53,6 +53,9 @@ class ThreeLevelDPRLoss():
         q_tensors: tf.Tensor,
         ctx_tensors: tf.Tensor
     ):
+        target_scores = tf.concat([tf.ones([7], dtype=tf.float32), tf.zeros([self.batch_size - 1], dtype=tf.float32)], axis=0)
+        target_scores = tf.tile(tf.expand_dims(target_scores, axis=0), multiples=[self.batch_size, 1]) / 7
+
         # Positive vs hard negative (of the same sample)
         ctx_tensors_within = tf.reshape(ctx_tensors, [self.batch_size, 8, -1])
         q_tensors_within = tf.expand_dims(q_tensors, 1)
@@ -75,19 +78,14 @@ class ThreeLevelDPRLoss():
         indices_within = tf.concat([tf.expand_dims(dim_0_indices_within, axis=-1), tf.expand_dims(dim_1_indices_within, axis=-1)], axis=-1)
         scores_within_cut = tf.gather_nd(scores_within, indices_within)
 
-        dim_0_indices_inbatch = tf.tile(tf.expand_dims(tf.range(self.batch_size), axis=1), multiples=[1, self.batch_size])
-        dim_1_indices_inbatch = tf.tile(tf.expand_dims(tf.range(self.batch_size), axis=0), multiples=[self.batch_size, 1])
+        dim_0_indices_inbatch = tf.tile(tf.expand_dims(tf.range(self.batch_size), axis=1), multiples=[1, self.batch_size - 1])
+        dim_1_indices_inbatch = [tf.concat([tf.range(i), tf.range(i + 1, self.batch_size)], axis=0) for i in range(self.batch_size)]
+        dim_1_indices_inbatch = tf.convert_to_tensor(dim_1_indices_inbatch)
         indices_inbatch = tf.concat([tf.expand_dims(dim_0_indices_inbatch, axis=-1), tf.expand_dims(dim_1_indices_inbatch, axis=-1)], axis=-1)
-        masked = tf.logical_not(tf.eye(self.batch_size, dtype=tf.bool))
-        indices_inbatch_cut = indices_inbatch[masked]
-        indices_inbatch_cut = tf.reshape(indices_inbatch_cut, shape=[self.batch_size, -1, 2])
-        scores_inbatch_cut = tf.gather_nd(scores_inbatch, indices=indices_inbatch_cut)
+        scores_inbatch_cut = tf.gather_nd(scores_inbatch, indices=indices_inbatch)
         
         scores_concat = tf.concat([scores_within_cut, scores_inbatch_cut], axis=-1)
-        scores_concat = tf.math.softmax(scores_concat, axis=-1) * 7
-        target_scores = tf.concat([tf.ones([7], dtype=tf.float32), tf.zeros([self.batch_size - 1], dtype=tf.float32)], axis=0)
-        target_scores = tf.tile(tf.expand_dims(target_scores, axis=0), multiples=[self.batch_size, 1])
+        scores_concat = tf.math.softmax(scores_concat, axis=-1)
 
-        binary_loss = self.binary_crossentropy_loss_fn(target_scores, scores_concat)
-
+        binary_loss = self.binary_crossentropy_loss_fn(scores_concat, target_scores)
         return nll_loss_within + inbatch_loss + binary_loss
