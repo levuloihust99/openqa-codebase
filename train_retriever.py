@@ -12,19 +12,6 @@ from dpr.data import manipulator
 
 
 def main():
-    try: # detect TPUs
-        resolver = tf.distribute.cluster_resolver.TPUClusterResolver() # TPU detection
-        tf.config.experimental_connect_to_cluster(resolver)
-        tf.tpu.experimental.initialize_tpu_system(resolver)
-        strategy = tf.distribute.TPUStrategy(resolver)
-    except ValueError: # detect GPUs
-        devices = tf.config.list_physical_devices("GPU")
-        # [tf.config.experimental.set_memory_growth(device, True) for device in devices]
-        if devices:
-            strategy = tf.distribute.MirroredStrategy()
-        else:
-            strategy = tf.distribute.get_strategy()
-
     parser = argparse.ArgumentParser()
 
     parser.add_argument("--train-data-size", type=int, default=const.TRAIN_DATA_SIZE)
@@ -44,12 +31,27 @@ def main():
     parser.add_argument("--checkpoint-path", type=str, default=const.CHECKPOINT_PATH)
     parser.add_argument("--ctx-encoder-trainable", type=eval, default=const.CTX_ENCODER_TRAINABLE, help="Whether the context encoder's weights are trainable")
     parser.add_argument("--question-encoder-trainable", type=eval, default=const.QUESTION_ENCODER_TRAINABLE, help="Whether the question encoder's weights are trainable")
+    parser.add_argument("--tpu", type=str, default="tpu-v3")
+    parser.add_argument("--pretrained-model", type=str, default="bert-base-uncased")
 
     args = parser.parse_args()
     epochs = args.epochs
 
+    try: # detect TPUs
+        resolver = tf.distribute.cluster_resolver.TPUClusterResolver(tpu=args.tpu) # TPU detection
+        tf.config.experimental_connect_to_cluster(resolver)
+        tf.tpu.experimental.initialize_tpu_system(resolver)
+        strategy = tf.distribute.TPUStrategy(resolver)
+    except ValueError: # detect GPUs
+        devices = tf.config.list_physical_devices("GPU")
+        # [tf.config.experimental.set_memory_growth(device, True) for device in devices]
+        if devices:
+            strategy = tf.distribute.MirroredStrategy()
+        else:
+            strategy = tf.distribute.get_strategy()
+
     tf.random.set_seed(args.seed)
-    tokenizer = BertTokenizer.from_pretrained("bert-base-uncased")
+    tokenizer = BertTokenizer.from_pretrained(args.pretrained_model)
 
     """Data pipeline
     1. Load retriever data (in `.tfrecord` format, stored serialized `tf.int32` tensor)
@@ -87,7 +89,7 @@ def main():
     Set up for distributed training
     """
     config = BertConfig.from_pretrained(
-        'bert-base-uncased',
+        args.pretrained_model,
         output_attentions=False,
         output_hidden_states=False,
         use_cache=False,
@@ -98,14 +100,14 @@ def main():
     with strategy.scope():
         # Instantiate question encoder
         question_encoder = TFBertModel.from_pretrained(
-            'bert-base-uncased',
+            args.pretrained_model,
             config=config,
             trainable=args.question_encoder_trainable,
         )
 
         # Instantiate context encoder
         context_encoder = TFBertModel.from_pretrained(
-            'bert-base-uncased',
+            args.pretrained_model,
             config=config,
             trainable=args.ctx_encoder_trainable,
         )
@@ -134,7 +136,7 @@ def main():
     """
     Distributed train step
     """
-    # @tf.function
+    @tf.function
     def dist_train_step(element):
         """The step function for one training step"""
         print("This function is tracing !")

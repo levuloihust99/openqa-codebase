@@ -16,8 +16,8 @@ MAX_GRAD_NORM = 2.0
 # training
 CTX_ENCODER_TRAINABLE = True
 QUESTION_ENCODER_TRAINABLE = True
-CHECKPOINT_PATH = "gs://dpr/checkpoints/retriever/V3-tpu-cloud"
-DATA_PATH = "gs://dpr/data/retriever/V3/N5000-INT"
+CHECKPOINT_PATH = "gs://openqa-dpr/checkpoints/retriever/V3-tpu-cloud"
+DATA_PATH = "gs://openqa-dpr/data/retriever/V3/N5000-INT"
 SHUFFLE = True
 SHUFFLE_SEED = 123
 MAX_CONTEXT_LENGTH = 256
