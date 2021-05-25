@@ -87,5 +87,5 @@ class ThreeLevelDPRLoss():
         scores_concat = tf.concat([scores_within_cut, scores_inbatch_cut], axis=-1)
         scores_concat = tf.math.softmax(scores_concat, axis=-1)
 
-        binary_loss = self.binary_crossentropy_loss_fn(scores_concat, target_scores)
+        binary_loss = self.binary_crossentropy_loss_fn(target_scores, scores_concat)
         return nll_loss_within + inbatch_loss + binary_loss
