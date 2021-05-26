@@ -16,7 +16,7 @@ MAX_GRAD_NORM = 2.0
 # training
 CTX_ENCODER_TRAINABLE = True
 QUESTION_ENCODER_TRAINABLE = True
-CHECKPOINT_PATH = "gs://openqa-dpr/checkpoints/retriever/V3-hardneg-base"
+CHECKPOINT_PATH = "gs://openqa-dpr/checkpoints/retriever/V3-base"
 DATA_PATH = "gs://openqa-dpr/data/retriever/V3/N5000-INT"
 PRETRAINED_MODEL = 'bert-base-uncased'
 SHUFFLE = True
