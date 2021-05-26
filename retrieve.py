@@ -17,9 +17,9 @@ from dpr.indexer import DenseFlatIndexer
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--create-index", type=eval, default=False, help="Whether to create index from embedded passages")
-parser.add_argument("--query-path", type=str, default="data/qas/nq-test.csv", help="Path to the queries used to test retriever")
-parser.add_argument("--ctx-source-path", type=str, default="data/wikipedia_split/psgs_w100.tsv", help="Path to the file containg all passages")
-parser.add_argument("--checkpoint-path", type=str, default="checkpoints/retriever", help="Path to the checkpointed model")
+parser.add_argument("--query-path", type=str, default="data/qas/nq-test-subset.csv", help="Path to the queries used to test retriever")
+parser.add_argument("--ctx-source-path", type=str, default="data/wikipedia_split/psgs_subset.tsv", help="Path to the file containg all passages")
+parser.add_argument("--checkpoint-path", type=str, default="checkpoints/retriever/V3-fix-loss", help="Path to the checkpointed model")
 parser.add_argument("--top-k", type=int, default=100, help="Number of documents that expects to be returned by retriever")
 parser.add_argument("--batch-size", type=int, default=16, help="Batch size when embedding questions")
 parser.add_argument("--index-path", type=str, default="indexer", help="Path to indexed database")
@@ -38,7 +38,7 @@ if args.create_index:
     print("Load and embed vectors... ")
     # Load embeddings
     ctx_embedding_path_pattern = "data/retriever_results/wikipedia_passages_{}.pkl"
-    embedding_files = [ctx_embedding_path_pattern.format(i) for i in range(500)]
+    embedding_files = [ctx_embedding_path_pattern.format(i) for i in range(17)]
 
     # Index data
     indexer.init_index(vector_sz=768)
@@ -74,7 +74,7 @@ sys.stdout.flush()
 
 query_path = args.query_path
 qas = pd.read_csv(query_path, sep="\t", header=None, names=['question', 'answers'])
-assert qas.shape[0] == 3610
+assert qas.shape[0] == 2000
 
 questions = qas.question.tolist()
 answers   = qas.answers.tolist()
@@ -136,6 +136,7 @@ def transform_to_tensors(
             ids = tokenizer.convert_tokens_to_ids(tokens)
             ids = tf.constant(ids)
             ids = tf.pad(tokens, [[0, max_query_length]])[:max_query_length]
+            # ids = tf.tensor_scatter_nd_update(ids, indices=[[max_query_length - 1]], updates=[tokenizer.sep_token_id])
             mask = tf.cast(ids > 0, tf.int32)
 
             yield {
@@ -173,7 +174,8 @@ for question in tqdm(dataset):
 
     outputs = question_encoder(
                     input_ids=input_ids,
-                    attention_mask=attention_mask
+                    attention_mask=attention_mask,
+                    training=False
                 )
 
     pooled = outputs.pooler_output

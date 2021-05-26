@@ -12,9 +12,9 @@ from dpr.qa_validation import calculate_matches
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--search-results", type=str, default="results/cache/search_results/top_ids_and_scores.pkl", help="Path to the top ids and scores returned by retriever")
-parser.add_argument("--ctx-source-path", type=str, default="data/wikipedia_split/psgs_w100.tsv", help="Path to the file containing all passages")
-parser.add_argument("--qas-path", type=str, default="data/qas/nq-test.csv", help="Path to the queries used to test the retriever")
-parser.add_argument("--reader-data-path", type=str, default="data/reader/reader_data.json", help="File to write out reader data")
+parser.add_argument("--ctx-source-path", type=str, default="data/wikipedia_split/psgs_subset.tsv", help="Path to the file containing all passages")
+parser.add_argument("--qas-path", type=str, default="data/qas/nq-test-subset.csv", help="Path to the queries used to test the retriever")
+parser.add_argument("--reader-data-path", type=str, default="data/reader/reader_data_subset.json", help="File to write out reader data")
 
 args = parser.parse_args()
 

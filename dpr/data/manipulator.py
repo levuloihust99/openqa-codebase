@@ -368,7 +368,7 @@ def build_tfrecord_tokenized_data_for_ctx_sources(
     def _serialize(context_ids, passage_id):
         features = {
             'context_ids': tf.train.Feature(int64_list=tf.train.Int64List(value=context_ids)),
-            'passage_id': tf.train.Feature(bytes_list=tf.train.BytesList(value=tf.expand_dims(passage_id, axis=0)))
+            'passage_id': tf.train.Feature(bytes_list=tf.train.BytesList(value=[passage_id.numpy()]))
         }
 
         example = tf.train.Example(features=tf.train.Features(feature=features))
@@ -382,7 +382,7 @@ def build_tfrecord_tokenized_data_for_ctx_sources(
 
     dataset = dataset.window(shard_size)
     
-    if os.path.exists(out_dir):
+    if not os.path.exists(out_dir):
         os.makedirs(out_dir)
 
     idx = 0
