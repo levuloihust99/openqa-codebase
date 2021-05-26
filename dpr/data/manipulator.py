@@ -398,8 +398,9 @@ def load_tfrecord_tokenized_data_for_ctx_sources(
     input_path: str,
     max_context_length: int
 ):
-    list_files = glob.glob("{}/*".format(input_path))
+    list_files = tf.io.gfile.listdir(input_path)
     list_files.sort()
+    list_files = [os.path.join(input_path, ctx_file) for ctx_file in list_files]
     
     dataset = tf.data.Dataset.from_tensor_slices(list_files)
     dataset = dataset.flat_map(

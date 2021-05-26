@@ -1,0 +1,7 @@
+/data/
+/bert-base-uncased/
+/.venv/
+/.vscode/
+/indexer/
+/checkpoints/
+__pycache__/

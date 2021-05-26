@@ -61,9 +61,8 @@ def run(
         global_batch = list(zip(global_passage_ids, global_batch_outputs))
 
         count += 1
-        if count % 50 == 0:
-            print("Batch: {: <10} - Elapsed: {}".format(count, time.perf_counter() - begin))
-            begin = time.perf_counter()
+        print("Step: {: <10} - Elapsed: {}".format(count, time.perf_counter() - begin))
+        begin = time.perf_counter()
 
         if len(chunk) + len(global_batch) >= args.records_per_file:
             delta = len(chunk) + len(global_batch) - args.records_per_file
@@ -172,6 +171,7 @@ def main():
         root_ckpt = tf.train.Checkpoint(model=retriever)
 
         root_ckpt.restore(tf.train.latest_checkpoint(checkpoint_path)).expect_partial()
+    print(tf.train.latest_checkpoint(checkpoint_path))
 
     print("done")
     print("----------------------------------------------------------------------------------------------------------------------")
