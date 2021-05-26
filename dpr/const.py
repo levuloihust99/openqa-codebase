@@ -16,7 +16,7 @@ MAX_GRAD_NORM = 2.0
 # training
 CTX_ENCODER_TRAINABLE = True
 QUESTION_ENCODER_TRAINABLE = True
-CHECKPOINT_PATH = "gs://openqa-dpr/checkpoints/retriever/V3-tpu-cloud"
+CHECKPOINT_PATH = "gs://openqa-dpr/checkpoints/retriever/V3-hardneg-base"
 DATA_PATH = "gs://openqa-dpr/data/retriever/V3/N5000-INT"
 PRETRAINED_MODEL = 'bert-base-uncased'
 SHUFFLE = True
@@ -26,3 +26,11 @@ MAX_QUERY_LENGTH = 256
 
 # tpu
 TPU_NAME = "tpu-v3"
+
+# inference
+CTX_SOURCE_PATH = "data/wikipedia_split/psgs_subset.tsv"
+QUERY_PATH = "data/qas/nq-test.csv"
+READER_DATA_PATH = "data/reader"
+INDEX_PATH = "indexer"
+RESULT_PATH = "results"
+TOP_K = 100

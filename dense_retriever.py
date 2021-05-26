@@ -23,9 +23,9 @@ from dpr import const
 from dpr.qa_validation import calculate_matches
 
 
-def create_or_retrieve_indexer():
+def create_or_retrieve_indexer(index_path):
     indexer = DenseFlatIndexer(buffer_size=50000)
-    index_files = glob.glob("{}/*".format(args.index_path))
+    index_files = glob.glob("{}/*".format(index_path))
 
     if not index_files:
         print("Found no existing indexer. Creating new one...")
@@ -48,12 +48,12 @@ def create_or_retrieve_indexer():
             indexer.index_data(vectors_shard)
 
         # Write index to disk
-        indexer.serialize(args.index_path)
+        indexer.serialize(index_path)
 
     else:
         print("Indexer is already created...")
         print("Deserializing indexer from disk... ")
-        indexer.deserialize(args.index_path)
+        indexer.deserialize(index_path)
 
     print("done")
     print("-----------------------------------------------------------")
@@ -101,6 +101,7 @@ def load_qas_test_data():
 
     questions = qas.question.tolist()
     answers   = qas.answers.tolist()
+    answers = [eval(answer) for answer in answers]
 
     print("done")
     print("-----------------------------------------------------------")
@@ -211,9 +212,7 @@ def search_knn(
     return top_ids_and_scores
 
 
-def load_ctx_sources(
-    ctx_source_path: str
-):
+def load_ctx_sources():
     print("Loading all documents into memory... ")
     start_time = time.perf_counter()
     all_docs_df = pd.read_csv(args.ctx_source_path, sep='\t', header=0)
@@ -229,7 +228,8 @@ def load_ctx_sources(
 def validate(
     top_ids_and_scores: List[Tuple[List, np.ndarray]],
     answers: List[List[Text]],
-    ctx_sources: Dict[Text, Text]
+    ctx_sources: Dict[Text, Text],
+    top_k_hits_path: Text
 ):
     match_stats = calculate_matches(
         all_docs=ctx_sources,
@@ -246,7 +246,7 @@ def validate(
     for i, v in enumerate(top_k_hits):
         stats.append("Top {: <3} hits: {:.2f}".format(i + 1, v * 100))
 
-    with open("results/top_k_hits.txt", "w") as writer:
+    with open(top_k_hits_path, "w") as writer:
         writer.write("\n".join(stats))
 
     return match_stats.questions_doc_hits
@@ -299,27 +299,46 @@ def main():
     parser.add_argument("--index-path", type=str, default=const.INDEX_PATH, help="Path to indexed database")
     parser.add_argument("--pretrained-model", type=str, default=const.PRETRAINED_MODEL)
     parser.add_argument("--reader-data-path", type=str, default=const.READER_DATA_PATH)
+    parser.add_argument("--result-path", type=str, default=const.RESULT_PATH)
 
     global args
     args = parser.parse_args()
     configs = ["{}: {}".format(k, v) for k, v in args.__dict__.items()]
     configs_string = "\n".join(configs)
     print("Configurations:\n{}".format(configs_string))
-    print("----------------------------------------------------------------\n")
+    print("----------------------------------------------------------------------------------------------------------------------")
 
-    indexer = create_or_retrieve_indexer()
+    model_type = os.path.basename(args.checkpoint_path)
+    index_path = os.path.join(args.index_path, model_type)
+    if not os.path.exists(index_path):
+        os.makedirs(index_path)
+
+    reader_data_path = os.path.join(args.reader_data_path, model_type, "reader_data.json")
+    if not os.path.exists(os.path.dirname(reader_data_path)):
+        os.makedirs(os.path.dirname(reader_data_path))
+
+    top_k_hits_path = os.path.join(args.result_path, model_type, "top_k_hits.txt")
+    if not os.path.exists(os.path.dirname(top_k_hits_path)):
+        os.makedirs(os.path.dirname(top_k_hits_path))
+
+    indexer = create_or_retrieve_indexer(index_path=index_path)
     question_encoder = load_checkpoint()
     questions, answers = load_qas_test_data()
     dataset = prepare_dataset(questions)
     question_embeddings = generate_embeddings(question_encoder=question_encoder, dataset=dataset)
     top_ids_and_scores = search_knn(indexer=indexer, question_embeddings=question_embeddings)
-    all_docs = load_ctx_sources(ctx_source_path=args.ctx_source_path)
+    all_docs = load_ctx_sources()
 
     print("Validating... ")
     start_time = time.perf_counter()
-    questions_doc_hits = validate(top_ids_and_scores=top_ids_and_scores, answers=answers, ctx_sources=all_docs)
+    questions_doc_hits = validate(
+        top_ids_and_scores=top_ids_and_scores,
+        answers=answers,
+        ctx_sources=all_docs,
+        top_k_hits_path=top_k_hits_path
+    )
     print("done in {}s !".format(time.perf_counter() - start_time))
-    print("----------------------------------------------------------------")
+    print("----------------------------------------------------------------------------------------------------------------------")
 
     print("Generating reader data... ")
     start_time = time.perf_counter()
@@ -329,11 +348,11 @@ def main():
         all_docs=all_docs,
         top_passages_and_scores=top_ids_and_scores,
         per_question_hits=questions_doc_hits,
-        out_file=args.reader_data_path
+        out_file=reader_data_path
     )
 
     print("done in {}s !".format(time.perf_counter() - start_time))
-    print("----------------------------------------------------------------")
+    print("----------------------------------------------------------------------------------------------------------------------")
 
 
 if __name__ == "__main__":
