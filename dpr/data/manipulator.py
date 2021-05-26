@@ -1,4 +1,6 @@
 import os
+import glob
+
 import tensorflow as tf
 from transformers import BertTokenizer
 
@@ -390,6 +392,52 @@ def build_tfrecord_tokenized_data_for_ctx_sources(
         writer = tf.data.experimental.TFRecordWriter(os.path.join(out_dir, "psgs_subset_{:02d}.tfrecord".format(idx)))
         writer.write(window)
         idx += 1
+
+
+def load_tfrecord_tokenized_data_for_ctx_sources(
+    input_path: str,
+    max_context_length: int
+):
+    list_files = glob.glob("{}/*".format(input_path))
+    list_files.sort()
+    
+    dataset = tf.data.Dataset.from_tensor_slices(list_files)
+    dataset = dataset.flat_map(
+        lambda x: tf.data.TFRecordDataset(x)
+    )
+
+    feature_description = {
+        'context_ids': tf.io.FixedLenFeature([max_context_length], tf.int64),
+        'passage_id': tf.io.FixedLenFeature([1], tf.string)
+    }
+    def _parse(example_proto):
+        return tf.io.parse_single_example(example_proto, feature_description)
+
+    dataset = dataset.map(
+        _parse,
+        num_parallel_calls=tf.data.AUTOTUNE,
+        deterministic=True
+    )
+
+    def _map_fn(element):
+        context_ids = element['context_ids']
+        context_ids = tf.cast(context_ids, dtype=tf.int32)
+        context_masks = tf.cast(context_ids > 0, tf.bool)
+        passage_id = tf.squeeze(element['passage_id'], axis=0)
+
+        return {
+            'context_ids': context_ids,
+            'context_masks': context_masks,
+            'passage_id': passage_id
+        }
+
+    dataset = dataset.map(
+        _map_fn,
+        num_parallel_calls=tf.data.AUTOTUNE,
+        deterministic=True
+    )
+
+    return dataset
 
 
 def main():
