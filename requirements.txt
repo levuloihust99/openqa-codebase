@@ -1,4 +1,5 @@
 tensorflow==2.4.1
 tf-models-official==2.4.0
 transformers==4.4.2
-pandas
+pandas==1.2.4
+faiss-cpu==1.7.0

@@ -6,9 +6,11 @@ import os
 import argparse
 import time
 from tqdm import tqdm
+from datetime import datetime
 
 from dpr import const, models, losses, optimizers
 from dpr.data import manipulator
+from utilities import write_config
 
 
 def main():
@@ -31,10 +33,21 @@ def main():
     parser.add_argument("--checkpoint-path", type=str, default=const.CHECKPOINT_PATH)
     parser.add_argument("--ctx-encoder-trainable", type=eval, default=const.CTX_ENCODER_TRAINABLE, help="Whether the context encoder's weights are trainable")
     parser.add_argument("--question-encoder-trainable", type=eval, default=const.QUESTION_ENCODER_TRAINABLE, help="Whether the question encoder's weights are trainable")
-    parser.add_argument("--tpu", type=str, default="tpu-v3")
-    parser.add_argument("--pretrained-model", type=str, default="bert-base-uncased")
+    parser.add_argument("--tpu", type=str, default=const.TPU_NAME)
+    parser.add_argument("--pretrained-model", type=str, default=const.PRETRAINED_MODEL)
 
     args = parser.parse_args()
+    args_dict = args.__dict__
+
+    configs = ["{}: {}".format(k, v) for k, v in args_dict.items()]
+    configs_string = "\t" + "\n\t".join(configs) + "\n"
+    print("************************* Configurations *************************")
+    print(configs_string)
+    print("----------------------------------------------------------------------------------------------------------------------")
+
+    config_path = "configs/{}/{}/config.yml".format(__file__.rstrip(".py"), datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    write_config(config_path, args_dict)
+
     epochs = args.epochs
 
     try: # detect TPUs
