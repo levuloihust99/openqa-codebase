@@ -320,7 +320,7 @@ def main():
     print("----------------------------------------------------------------------------------------------------------------------")
 
     config_path = "configs/{}/{}/config.yml".format(__file__.rstrip(".py"), datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-    write_config(config_path, args.__dict__)
+    write_config(config_path, args_dict)
 
     index_path = os.path.join(args.index_path, model_type)
     if not os.path.exists(index_path):
