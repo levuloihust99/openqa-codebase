@@ -6,9 +6,11 @@ import os
 import argparse
 import time
 from tqdm import tqdm
+from datetime import datetime
 
 from dpr import const, models, losses, optimizers
 from dpr.data import manipulator
+from utilities import write_config
 
 
 def main():
@@ -35,6 +37,17 @@ def main():
     parser.add_argument("--pretrained-model", type=str, default=const.PRETRAINED_MODEL)
 
     args = parser.parse_args()
+    args_dict = args.__dict__
+
+    configs = ["{}: {}".format(k, v) for k, v in args_dict.items()]
+    configs_string = "\t" + "\n\t".join(configs) + "\n"
+    print("************************* Configurations *************************")
+    print(configs_string)
+    print("----------------------------------------------------------------------------------------------------------------------")
+
+    config_path = "configs/{}/{}/config.yml".format(__file__.rstrip(".py"), datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    write_config(config_path, args_dict)
+
     epochs = args.epochs
 
     try: # detect TPUs

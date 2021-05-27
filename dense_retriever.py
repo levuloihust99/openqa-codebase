@@ -5,6 +5,7 @@ import glob
 import sys
 from tqdm import tqdm
 import argparse
+from datetime import datetime
 
 import tensorflow as tf
 import pandas as pd
@@ -20,14 +21,18 @@ import json
 from dpr.indexer import DenseFlatIndexer
 from dpr import const
 from dpr.qa_validation import calculate_matches
+from utilities import write_config
 
 
 def create_or_retrieve_indexer(index_path, embeddings_path):
     indexer = DenseFlatIndexer(buffer_size=50000)
     index_files = glob.glob("{}/*".format(index_path))
 
-    if not index_files:
-        print("Found no existing indexer. Creating new one...")
+    if not index_files or args.force_create_index:
+        if not index_files:
+            print("Found no existing indexer. Creating new one...")
+        else:
+            print("Index exists, try to re-creating index...")
 
         indexer = DenseFlatIndexer(buffer_size=50000)
 
@@ -300,15 +305,23 @@ def main():
     parser.add_argument("--reader-data-path", type=str, default=const.READER_DATA_PATH)
     parser.add_argument("--result-path", type=str, default=const.RESULT_PATH)
     parser.add_argument("--embeddings-path", type=str, default=const.EMBEDDINGS_DIR)
+    parser.add_argument("--force-create-index", type=eval, default=False)
 
     global args
     args = parser.parse_args()
-    configs = ["{}: {}".format(k, v) for k, v in args.__dict__.items()]
-    configs_string = "\n".join(configs)
-    print("Configurations:\n{}".format(configs_string))
+    model_type = os.path.basename(args.checkpoint_path)
+    embeddings_path = os.path.join(args.embeddings_path, "shards-42031", model_type)
+    args_dict = {**args.__dict__, "embeddings_path" : embeddings_path}
+
+    configs = ["{}: {}".format(k, v) for k, v in args_dict.items()]
+    configs_string = "\t" + "\n\t".join(configs) + "\n"
+    print("************************* Configurations *************************")
+    print(configs_string)
     print("----------------------------------------------------------------------------------------------------------------------")
 
-    model_type = os.path.basename(args.checkpoint_path)
+    config_path = "configs/{}/{}/config.yml".format(__file__.rstrip(".py"), datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    write_config(config_path, args.__dict__)
+
     index_path = os.path.join(args.index_path, model_type)
     if not os.path.exists(index_path):
         os.makedirs(index_path)
@@ -321,7 +334,6 @@ def main():
     if not os.path.exists(os.path.dirname(top_k_hits_path)):
         os.makedirs(os.path.dirname(top_k_hits_path))
 
-    embeddings_path = os.path.join(args.embeddings_path, "shards-42031", model_type)
     indexer = create_or_retrieve_indexer(index_path=index_path, embeddings_path=embeddings_path)
     question_encoder = load_checkpoint()
     questions, answers = load_qas_test_data()

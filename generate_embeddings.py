@@ -3,12 +3,14 @@ import pickle
 import time
 import argparse
 from functools import partial
+from datetime import datetime
 
 import tensorflow as tf
 from transformers import BertConfig, TFBertModel
 
 from dpr import const
 from dpr.data import manipulator
+from utilities import write_config
 
 
 def spread_samples_greedy(global_batch_size, num_replicas, base_replica_batch_size):
@@ -227,7 +229,7 @@ def main():
     parser.add_argument("--checkpoint-path", type=str, default=const.CHECKPOINT_PATH)
     parser.add_argument("--ctx-source-shards-tfrecord", type=str, default=const.CTX_SOURCE_SHARDS_TFRECORD)
     parser.add_argument("--records-per-file", type=int, default=const.RECORDS_PER_FILE)
-    parser.add_argument("--embeddings-dir", type=str, default=const.EMBEDDINGS_DIR)
+    parser.add_argument("--embeddings-path", type=str, default=const.EMBEDDINGS_DIR)
     parser.add_argument("--seed", type=int, default=const.SHUFFLE_SEED)
     parser.add_argument("--batch-size", type=int, default=const.EVAL_BATCH_SIZE)
     parser.add_argument("--tpu", type=str, default=const.TPU_NAME)
@@ -237,6 +239,17 @@ def main():
 
     global args
     args = parser.parse_args()
+    embeddings_path = os.path.join(args.embeddings_path, "shards-42031", args.model_type)
+    args_dict = {args.__dict__, "embeddings_path": embeddings_path}
+
+    configs = ["{}: {}".format(k, v) for k, v in args_dict.items()]
+    configs_string = "\t" + "\n\t".join(configs) + "\n"
+    print("************************* Configurations *************************")
+    print(configs_string)
+    print("----------------------------------------------------------------------------------------------------------------------")
+
+    config_path = "configs/{}/{}/config.yml".format(__file__.rstrip(".py"), datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    write_config(config_path, args_dict)
 
     print("******************* Configurations *******************\n")
     configs = ["{}: {}".format(k, v) for k, v in args.__dict__.items()]
@@ -310,7 +323,7 @@ def main():
     Generate embeddings
     """
     print("Generate embeddings...")
-    out_dir = os.path.join(args.embeddings_dir, args.model_type, "shards-{}".format(args.records_per_file))
+    out_dir = embeddings_path
     if not os.path.exists(out_dir):
         os.makedirs(out_dir)
 
