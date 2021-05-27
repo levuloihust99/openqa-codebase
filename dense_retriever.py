@@ -22,7 +22,7 @@ from dpr import const
 from dpr.qa_validation import calculate_matches
 
 
-def create_or_retrieve_indexer(index_path):
+def create_or_retrieve_indexer(index_path, embeddings_path):
     indexer = DenseFlatIndexer(buffer_size=50000)
     index_files = glob.glob("{}/*".format(index_path))
 
@@ -33,7 +33,7 @@ def create_or_retrieve_indexer(index_path):
 
         print("Load and embed vectors... ")
         # Load embeddings
-        ctx_embedding_path_pattern = "data/retriever_results/wikipedia_passages_{}.pkl"
+        ctx_embedding_path_pattern = "{}/wikipedia_passages_{{}}.pkl".format(embeddings_path)
         embedding_files = [ctx_embedding_path_pattern.format(i) for i in range(17)]
 
         # Index data
@@ -82,7 +82,7 @@ def load_checkpoint():
     retriever = tf.train.Checkpoint(question_model=question_encoder)
     root_ckpt = tf.train.Checkpoint(model=retriever)
 
-    root_ckpt.restore(tf.train.latest_checkpoint(checkpoint_path))
+    root_ckpt.restore(tf.train.latest_checkpoint(checkpoint_path)).expect_partial()
 
     print("Checkpoint file: {}".format(tf.train.latest_checkpoint(checkpoint_path)))
     print("done")
@@ -299,6 +299,7 @@ def main():
     parser.add_argument("--pretrained-model", type=str, default=const.PRETRAINED_MODEL)
     parser.add_argument("--reader-data-path", type=str, default=const.READER_DATA_PATH)
     parser.add_argument("--result-path", type=str, default=const.RESULT_PATH)
+    parser.add_argument("--embeddings-path", type=str, default=const.EMBEDDINGS_DIR)
 
     global args
     args = parser.parse_args()
@@ -320,7 +321,8 @@ def main():
     if not os.path.exists(os.path.dirname(top_k_hits_path)):
         os.makedirs(os.path.dirname(top_k_hits_path))
 
-    indexer = create_or_retrieve_indexer(index_path=index_path)
+    embeddings_path = os.path.join(args.embeddings_path, "shards-42031", model_type)
+    indexer = create_or_retrieve_indexer(index_path=index_path, embeddings_path=embeddings_path)
     question_encoder = load_checkpoint()
     questions, answers = load_qas_test_data()
     dataset = prepare_dataset(questions)
