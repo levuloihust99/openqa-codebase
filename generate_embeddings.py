@@ -2,12 +2,61 @@ import os
 import pickle
 import time
 import argparse
+from functools import partial
 
 import tensorflow as tf
 from transformers import BertConfig, TFBertModel
 
 from dpr import const
 from dpr.data import manipulator
+
+
+def spread_samples_greedy(global_batch_size, num_replicas, base_replica_batch_size):
+    if global_batch_size < num_replicas:
+        return [global_batch_size]
+
+    div = global_batch_size // base_replica_batch_size
+    remain = global_batch_size % base_replica_batch_size
+    spread = [base_replica_batch_size] * div + [remain]
+    while True:
+        if len(spread) == num_replicas:
+            break
+        
+        base_replica_batch_size = base_replica_batch_size // 2
+        idx = len(spread) - 1
+        while True:
+            if idx < 0:
+                break
+
+            value = spread[idx]
+            if value > base_replica_batch_size:
+                spread.pop(idx)
+                spread.insert(idx, value - base_replica_batch_size)
+                spread.insert(idx, base_replica_batch_size)
+
+            idx = idx - 1
+            if len(spread) == num_replicas:
+                break
+
+    return spread
+
+
+def spread_samples_equally(global_batch_size, num_replicas, base_replica_batch_size):
+    if global_batch_size < base_replica_batch_size:
+        return [global_batch_size], -1, -1
+
+    while global_batch_size < base_replica_batch_size * num_replicas:
+        base_replica_batch_size = base_replica_batch_size // 2
+        if base_replica_batch_size == 0:
+            break
+
+    remainder = global_batch_size - base_replica_batch_size * num_replicas
+    return [base_replica_batch_size] * num_replicas, remainder, base_replica_batch_size
+
+
+def value_fn_template(ctx, indices, tensors):
+    idxs = indices[ctx.replica_id_in_sync_group]
+    return tensors[idxs[0] : idxs[1]]
 
 
 def run(
@@ -42,22 +91,103 @@ def run(
     begin = time.perf_counter()
 
     chunk = []
-    idx = 0
+    index = 0
     count = 0
     iterator = iter(dataset)
 
     for element in iterator:
-        per_replica_outputs = eval_step(element) # Run on TPU
-
-        # Run on CPU
         if strategy.num_replicas_in_sync > 1:
-            global_batch_outputs = tf.concat(per_replica_outputs.values, axis=0)
+            reduced_context_ids = tf.concat(element['context_ids'].values, axis=0)
+
+        if strategy.num_replicas_in_sync > 1:
             global_passage_ids = tf.concat(element['passage_id'].values, axis=0)
         else:
-            global_batch_outputs = per_replica_outputs
             global_passage_ids = element['passage_id']
-        
         global_passage_ids = [id.decode('utf-8') for id in global_passage_ids.numpy()]
+        
+        global_batch_size = reduced_context_ids.shape[0]
+
+        if global_batch_size < 1024 * 8: # the last batch
+            if strategy.num_replicas_in_sync > 1:
+                reduced_context_masks = tf.concat(element['context_masks'].values, axis=0)
+            else:
+                reduced_context_masks = element['context_masks']
+
+            global_batch_outputs = None
+            base_replica_batch_size = args.batch_size
+
+            while True:
+                spread, global_batch_size, base_replica_batch_size = spread_samples_equally(
+                    global_batch_size=global_batch_size,
+                    num_replicas=strategy.num_replicas_in_sync,
+                    base_replica_batch_size=base_replica_batch_size
+                )
+
+                if len(spread) > 1:
+                    indices = []
+                    idx = 0
+                    for num in spread:
+                        indices.append((idx, idx + num))
+                        idx += num
+                    
+                    value_fn_for_context_ids = partial(value_fn_template, indices=indices, tensors=reduced_context_ids)
+                    value_fn_for_context_masks = partial(value_fn_template, indices=indices, tensors=reduced_context_masks)
+
+                    reduced_context_ids = reduced_context_ids[base_replica_batch_size * strategy.num_replicas_in_sync:]
+                    reduced_context_masks = reduced_context_masks[base_replica_batch_size * strategy.num_replicas_in_sync:]
+
+                    dist_context_ids = strategy.experimental_distribute_values_from_function(value_fn_for_context_ids)
+                    dist_context_masks = strategy.experimental_distribute_values_from_function(value_fn_for_context_masks)
+
+                    element = {
+                        'context_ids': dist_context_ids,
+                        'context_masks': dist_context_masks,
+                    }
+
+                    per_replica_outputs = eval_step(element)
+                    if global_batch_outputs is None:
+                        if strategy.num_replicas_in_sync > 1:
+                            global_batch_outputs = tf.concat(per_replica_outputs.values, axis=0)
+                        else:
+                            global_batch_outputs = per_replica_outputs
+                    else:
+                        if strategy.num_replicas_in_sync > 1:
+                            global_batch_outputs = tf.concat([global_batch_outputs, *per_replica_outputs.values], axis=0)
+                        else:
+                            global_batch_outputs = tf.concat([global_batch_outputs, per_replica_outputs], axis=0)
+
+                    if global_batch_size == 0:
+                        break
+
+                else:
+                    element = {
+                        'context_ids': reduced_context_ids,
+                        'context_masks': reduced_context_masks,
+                    }
+
+                    per_replica_outputs = eval_step(element)
+
+                    if global_batch_outputs is None:
+                        if strategy.num_replicas_in_sync > 1:
+                            global_batch_outputs = per_replica_outputs.values[0]
+                        else:
+                            global_batch_outputs = per_replica_outputs
+                    else:
+                        if strategy.num_replicas_in_sync > 1:
+                            global_batch_outputs = tf.concat([global_batch_outputs, per_replica_outputs.values[0]], axis=0)
+                        else:
+                            global_batch_outputs = tf.concat([global_batch_outputs, per_replica_outputs], axis=0)
+
+                    break
+
+        else:
+            per_replica_outputs = eval_step(element) # Run on TPU
+
+            if strategy.num_replicas_in_sync > 1:
+                global_batch_outputs = tf.concat(per_replica_outputs.values, axis=0)
+            else:
+                global_batch_outputs = per_replica_outputs
+
         global_batch = list(zip(global_passage_ids, global_batch_outputs))
 
         count += 1
@@ -74,19 +204,19 @@ def run(
                 remain_part = []
 
             chunk.extend(kept_part)
-            with open(os.path.join(out_dir, "wikipedia_passages_{}.pkl".format(idx)), "wb") as writer:
+            with open(os.path.join(out_dir, "wikipedia_passages_{}.pkl".format(index)), "wb") as writer:
                 pickle.dump(chunk, writer)
                 print("{: <30}{}".format(time.perf_counter() - marked_time, os.path.abspath(writer.name)))
             marked_time = time.perf_counter()
             
             chunk = remain_part
-            idx += 1
+            index += 1
         
         else:
             chunk.extend(global_batch)
         
     if chunk:
-        with open(os.path.join(out_dir, "wikipedia_passages_{:02d}.pkl".format(idx)), "wb") as writer:
+        with open(os.path.join(out_dir, "wikipedia_passages_{:02d}.pkl".format(index)), "wb") as writer:
             pickle.dump(chunk, writer)
             print("{: <30}{}".format(time.perf_counter() - marked_time, os.path.abspath(writer.name)))
 
@@ -96,7 +226,7 @@ def main():
 
     parser.add_argument("--checkpoint-path", type=str, default=const.CHECKPOINT_PATH)
     parser.add_argument("--ctx-source-shards-tfrecord", type=str, default=const.CTX_SOURCE_SHARDS_TFRECORD)
-    parser.add_argument("--records-per-file", type=int, default=42031)
+    parser.add_argument("--records-per-file", type=int, default=const.RECORDS_PER_FILE)
     parser.add_argument("--embeddings-dir", type=str, default=const.EMBEDDINGS_DIR)
     parser.add_argument("--seed", type=int, default=const.SHUFFLE_SEED)
     parser.add_argument("--batch-size", type=int, default=const.EVAL_BATCH_SIZE)
