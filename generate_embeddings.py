@@ -10,50 +10,7 @@ from transformers import BertConfig, TFBertModel
 
 from dpr import const
 from dpr.data import manipulator
-from utilities import write_config
-
-
-def spread_samples_greedy(global_batch_size, num_replicas, base_replica_batch_size):
-    if global_batch_size < num_replicas:
-        return [global_batch_size]
-
-    div = global_batch_size // base_replica_batch_size
-    remain = global_batch_size % base_replica_batch_size
-    spread = [base_replica_batch_size] * div + [remain]
-    while True:
-        if len(spread) == num_replicas:
-            break
-        
-        base_replica_batch_size = base_replica_batch_size // 2
-        idx = len(spread) - 1
-        while True:
-            if idx < 0:
-                break
-
-            value = spread[idx]
-            if value > base_replica_batch_size:
-                spread.pop(idx)
-                spread.insert(idx, value - base_replica_batch_size)
-                spread.insert(idx, base_replica_batch_size)
-
-            idx = idx - 1
-            if len(spread) == num_replicas:
-                break
-
-    return spread
-
-
-def spread_samples_equally(global_batch_size, num_replicas, base_replica_batch_size):
-    if global_batch_size < base_replica_batch_size:
-        return [global_batch_size], -1, -1
-
-    while global_batch_size < base_replica_batch_size * num_replicas:
-        base_replica_batch_size = base_replica_batch_size // 2
-        if base_replica_batch_size == 0:
-            break
-
-    remainder = global_batch_size - base_replica_batch_size * num_replicas
-    return [base_replica_batch_size] * num_replicas, remainder, base_replica_batch_size
+from utilities import write_config, spread_samples_equally, spread_samples_greedy
 
 
 def value_fn_template(ctx, indices, tensors):
@@ -100,6 +57,8 @@ def run(
     for element in iterator:
         if strategy.num_replicas_in_sync > 1:
             reduced_context_ids = tf.concat(element['context_ids'].values, axis=0)
+        else:
+            reduced_context_ids = element['context_ids']
 
         if strategy.num_replicas_in_sync > 1:
             global_passage_ids = tf.concat(element['passage_id'].values, axis=0)
@@ -109,7 +68,7 @@ def run(
         
         global_batch_size = reduced_context_ids.shape[0]
 
-        if global_batch_size < 1024 * 8: # the last batch
+        if global_batch_size < args.batch_size * strategy.num_replicas_in_sync: # the last batch
             if strategy.num_replicas_in_sync > 1:
                 reduced_context_masks = tf.concat(element['context_masks'].values, axis=0)
             else:
@@ -236,6 +195,7 @@ def main():
     parser.add_argument("--gcloud-bucket", type=str, default=const.STORAGE_BUCKET)
     parser.add_argument("--model-type", type=str, default=const.DEFAULT_MODEL)
     parser.add_argument("--max-context-length", type=int, default=const.MAX_CONTEXT_LENGTH, help="Maximum length of a document")
+    parser.add_argument("--pretrained-model", type=str, default=const.PRETRAINED_MODEL)
 
     global args
     args = parser.parse_args()
@@ -295,7 +255,7 @@ def main():
     """
     print("Loading checkpoint...")
     config = BertConfig.from_pretrained(
-        'bert-base-uncased',
+        args.pretrained_model,
         output_attentions=False,
         output_hidden_states=False,
         use_cache=False,
@@ -305,7 +265,7 @@ def main():
 
     with strategy.scope():
         context_encoder = TFBertModel.from_pretrained(
-            'bert-base-uncased',
+            args.pretrained_model,
             config=config,
             trainable=False
         )

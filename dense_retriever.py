@@ -3,6 +3,7 @@ import os
 import pickle
 import glob
 import sys
+from tensorflow.python.data.util.structure import NoneTensor
 from tqdm import tqdm
 import argparse
 from datetime import datetime
@@ -21,7 +22,7 @@ import json
 from dpr.indexer import DenseFlatIndexer
 from dpr import const
 from dpr.qa_validation import calculate_matches
-from utilities import write_config
+from utilities import write_config, spread_samples_greedy, spread_samples_equally
 
 
 def create_or_retrieve_indexer(index_path, embeddings_path):
@@ -65,33 +66,32 @@ def create_or_retrieve_indexer(index_path, embeddings_path):
     return indexer
 
 
-def load_checkpoint():
+def load_checkpoint(checkpoint_path, strategy):
     print("Loading checkpoint... ")
 
-    checkpoint_path = args.checkpoint_path
-
     config = BertConfig.from_pretrained(
-        "bert-base-uncased",
+        args.pretrained_model,
         output_attentions=False,
         output_hidden_states=False,
         use_cache=False,
         return_dict=True,
     )
 
-    question_encoder = TFBertModel.from_pretrained(
-        "bert-base-uncased",
-        config=config,
-        trainable=False
-    )
+    with strategy.scope():
+        question_encoder = TFBertModel.from_pretrained(
+            args.pretrained_model,
+            config=config,
+            trainable=False
+        )
 
-    retriever = tf.train.Checkpoint(question_model=question_encoder)
-    root_ckpt = tf.train.Checkpoint(model=retriever)
+        retriever = tf.train.Checkpoint(question_model=question_encoder)
+        root_ckpt = tf.train.Checkpoint(model=retriever)
 
-    root_ckpt.restore(tf.train.latest_checkpoint(checkpoint_path)).expect_partial()
+        root_ckpt.restore(tf.train.latest_checkpoint(checkpoint_path)).expect_partial()
 
-    print("Checkpoint file: {}".format(tf.train.latest_checkpoint(checkpoint_path)))
-    print("done")
-    print("-----------------------------------------------------------")
+        print("Checkpoint file: {}".format(tf.train.latest_checkpoint(checkpoint_path)))
+        print("done")
+        print("-----------------------------------------------------------")
 
     return question_encoder
 
@@ -144,16 +144,19 @@ def transform_to_tensors(
     )
 
 
-def prepare_dataset(questions):
+def prepare_dataset(questions, strategy):
     print("Preparing dataset for inference... ", end="")
     sys.stdout.flush()
 
     text_dataset = tf.data.Dataset.from_tensor_slices(questions)
 
-    tokenizer = BertTokenizer.from_pretrained("bert-base-uncased")
+    tokenizer = BertTokenizer.from_pretrained(args.pretrained_model)
     dataset = transform_to_tensors(text_dataset, tokenizer)
 
     dataset = dataset.batch(args.batch_size).prefetch(tf.data.AUTOTUNE)
+    dataset = strategy.distribute_datasets_from_function(
+        lambda _: dataset
+    )
 
     print("done !")
     print("-----------------------------------------------------------")
@@ -162,24 +165,121 @@ def prepare_dataset(questions):
 
 def generate_embeddings(
     question_encoder,
-    dataset
+    dataset,
+    strategy
 ):
+    @tf.function
+    def dist_step(element):
+        """The step function for one feed forward step"""
+        print("This function is tracing !")
+
+        def step_fn(element):
+            """The computation to be run on each compute device"""
+            input_ids = element['input_ids']
+            attention_mask = element['attention_mask']
+
+            outputs = question_encoder(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                training=False
+            )
+
+            pooled = outputs.pooler_output
+            return pooled
+    
+        per_replica_outputs = strategy.run(step_fn, args=(element,))
+        return per_replica_outputs
+
+    def value_fn_template(ctx, indices, tensors):
+        idxs = indices[ctx.replica_id_in_sync_group]
+        return tensors[idxs[0] : idxs[1]]
+        
     print("Generate question embeddings... ")
 
-    question_embeddings = []
     count = 0
+    question_embeddings = []
     for question in tqdm(dataset):
-        input_ids = question['input_ids']
-        attention_mask = question['attention_mask']
+        if strategy.num_replicas_in_sync > 1:
+            reduced_input_ids = tf.concat(question['input_ids'].values, axis=0)
+        else:
+            reduced_input_ids = question['input_ids']
 
-        outputs = question_encoder(
-                        input_ids=input_ids,
-                        attention_mask=attention_mask,
-                        training=False
-                    )
+        global_batch_size = reduced_input_ids.shape[0]
+        if global_batch_size < args.batch_size * strategy.num_replicas_in_sync:
+            if strategy.num_replicas_in_sync > 1:
+                reduced_attention_mask = tf.concat(question['attention_mask'].values, axis=0)
+            else:
+                reduced_attention_mask = question['attention_mask']
 
-        pooled = outputs.pooler_output
-        question_embeddings.extend(pooled.numpy())
+            base_replica_batch_size = args.batch_size
+            global_batch_outputs = None
+            while True:
+                spread, global_batch_size, base_replica_batch_size = spread_samples_equally(
+                    global_batch_size=global_batch_size,
+                    num_replicas=strategy.num_replicas_in_sync,
+                    base_replica_batch_size=base_replica_batch_size
+                )
+
+                if len(spread) > 1:
+                    indices = []
+                    idx = 0
+                    for num in spread:
+                        indices.append((idx, idx + num))
+                        idx += num
+
+                    value_fn_for_input_ids = partial(value_fn_template, indices=indices, tensors=reduced_input_ids)
+                    value_fn_for_attention_mask = partial(value_fn_template, indices=indices, tensors=reduced_attention_mask)
+
+                    reduced_input_ids = reduced_input_ids[base_replica_batch_size * strategy.num_replicas_in_sync:]
+                    reduced_attention_mask = reduced_attention_mask[base_replica_batch_size * strategy.num_replicas_in_sync:]
+
+                    dist_input_ids = strategy.experimental_distribute_values_from_function(value_fn_for_input_ids)
+                    dist_attention_mask = strategy.experimental_distribute_values_from_function(value_fn_for_attention_mask)
+
+                    question = {
+                        "input_ids": dist_input_ids,
+                        "attention_mask": dist_attention_mask
+                    }
+                    per_replica_outputs = dist_step(question)
+                    if global_batch_outputs is None:
+                        if strategy.num_replicas_in_sync > 1:
+                            global_batch_outputs = tf.concat(per_replica_outputs.values, axis=0)
+                        else:
+                            global_batch_outputs = per_replica_outputs
+                    else:
+                        if strategy.num_replicas_in_sync > 1:
+                            global_batch_outputs = tf.concat([global_batch_outputs, *per_replica_outputs.values], axis=0)
+                        else:
+                            global_batch_outputs = tf.concat([global_batch_outputs, per_replica_outputs], axis=0)
+
+                else:
+                    question = {
+                        'input_ids': reduced_input_ids,
+                        'attention_mask': reduced_attention_mask
+                    }
+
+                    per_replica_outputs = dist_step(question)
+
+                    if global_batch_outputs is None:
+                        if strategy.num_replicas_in_sync > 1:
+                            global_batch_outputs = per_replica_outputs.values[0]
+                        else:
+                            global_batch_outputs = per_replica_outputs
+                    else:
+                        if strategy.num_replicas_in_sync > 1:
+                            global_batch_outputs = tf.concat([global_batch_outputs, per_replica_outputs.values[0]], axis=0)
+                        else:
+                            global_batch_outputs = tf.concat([global_batch_outputs, per_replica_outputs], axis=0)
+
+            
+        else:
+            per_replica_outputs = dist_step(question)
+            if strategy.num_replicas_in_sync > 1:
+                global_batch_outputs = tf.concat(per_replica_outputs.values, axis=0)
+            else:
+                global_batch_outputs = per_replica_outputs
+
+        question_embeddings.extend(global_batch_outputs.numpy())
         count += 1
         if count % 10 == 0:
             print("Embedded {} questions".format(count * args.batch_size))
@@ -306,6 +406,7 @@ def main():
     parser.add_argument("--result-path", type=str, default=const.RESULT_PATH)
     parser.add_argument("--embeddings-path", type=str, default=const.EMBEDDINGS_DIR)
     parser.add_argument("--force-create-index", type=eval, default=False)
+    parser.add_argument("--pretrained-model", type=str, default=const.PRETRAINED_MODEL)
 
     global args
     args = parser.parse_args()
@@ -334,11 +435,24 @@ def main():
     if not os.path.exists(os.path.dirname(top_k_hits_path)):
         os.makedirs(os.path.dirname(top_k_hits_path))
 
+    try: # detect TPUs
+        resolver = tf.distribute.cluster_resolver.TPUClusterResolver(tpu=args.tpu) # TPU detection
+        tf.config.experimental_connect_to_cluster(resolver)
+        tf.tpu.experimental.initialize_tpu_system(resolver)
+        strategy = tf.distribute.TPUStrategy(resolver)
+    except Exception: # detect GPUs
+        devices = tf.config.list_physical_devices("GPU")
+        # [tf.config.experimental.set_memory_growth(device, True) for device in devices]
+        if devices:
+            strategy = tf.distribute.MirroredStrategy(["GPU:0"])
+        else:
+            strategy = tf.distribute.get_strategy()
+
     indexer = create_or_retrieve_indexer(index_path=index_path, embeddings_path=embeddings_path)
-    question_encoder = load_checkpoint()
+    question_encoder = load_checkpoint(checkpoint_path=args.checkpoint_path, strategy=strategy)
     questions, answers = load_qas_test_data()
-    dataset = prepare_dataset(questions)
-    question_embeddings = generate_embeddings(question_encoder=question_encoder, dataset=dataset)
+    dataset = prepare_dataset(questions, strategy)
+    question_embeddings = generate_embeddings(question_encoder=question_encoder, dataset=dataset, strategy=strategy)
     top_ids_and_scores = search_knn(indexer=indexer, question_embeddings=question_embeddings)
     all_docs = load_ctx_sources()
 
