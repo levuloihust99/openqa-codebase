@@ -1,4 +1,6 @@
 import os
+import glob
+
 import tensorflow as tf
 from transformers import BertTokenizer
 
@@ -314,38 +316,156 @@ def pad(
     )
 
 
-if __name__ == "__main__":
+def build_tfrecord_tokenized_data_for_ctx_sources(
+    pretrained_model: str,
+    ctx_source_path: str,
+    out_dir: str,
+    max_context_length: int = 256,
+    shard_size: int = 42031
+):
+    tokenizer = BertTokenizer.from_pretrained(pretrained_model)
+    ctx_source_files = ["{}/psgs_subset_{:02d}.tsv".format(ctx_source_path, i) for i in range(17)]
+    ctx_source_files = tf.data.Dataset.from_tensor_slices(ctx_source_files)
+    text_dataset = ctx_source_files.flat_map(
+        map_func=lambda x: tf.data.TextLineDataset(x)
+    )
+
+    def _transform():
+        count = 0
+        for element in text_dataset:
+            passage = element.numpy().decode()
+            id, text, title = passage.split("\t")
+            passage_id = "wiki:" + id
+
+            text_tokens = tokenizer.tokenize(text)
+            title_tokens = tokenizer.tokenize(title)
+            sent_tokens = [tokenizer.cls_token] + title_tokens \
+                          + [tokenizer.sep_token] + text_tokens + [tokenizer.sep_token]
+            
+            if len(sent_tokens) < max_context_length:
+                sent_tokens += [tokenizer.pad_token] * (max_context_length - len(sent_tokens))
+            
+            sent_tokens = sent_tokens[:max_context_length]
+            sent_tokens[-1] = tokenizer.sep_token
+
+            context_ids = tokenizer.convert_tokens_to_ids(sent_tokens)
+            context_ids = tf.convert_to_tensor(context_ids, dtype=tf.int32)
+
+            count += 1
+            print("Count: {}".format(count))
+
+            yield {
+                'context_ids': context_ids,
+                'passage_id': tf.constant(passage_id)
+            }
+
+    dataset = tf.data.Dataset.from_generator(
+        _transform,
+        output_signature={
+            'context_ids': tf.TensorSpec([max_context_length], tf.int32),
+            'passage_id': tf.TensorSpec([], tf.string)
+        }
+    )
+
+    def _serialize(context_ids, passage_id):
+        features = {
+            'context_ids': tf.train.Feature(int64_list=tf.train.Int64List(value=context_ids)),
+            'passage_id': tf.train.Feature(bytes_list=tf.train.BytesList(value=[passage_id.numpy()]))
+        }
+
+        example = tf.train.Example(features=tf.train.Features(feature=features))
+        return example.SerializeToString()
+
+    dataset = dataset.map(
+        lambda x: tf.py_function(_serialize, inp=[x['context_ids'], x['passage_id']], Tout=tf.string),
+        num_parallel_calls=tf.data.AUTOTUNE,
+        deterministic=True
+    )
+
+    dataset = dataset.window(shard_size)
+    
+    if not os.path.exists(out_dir):
+        os.makedirs(out_dir)
+
+    idx = 0
+    for window in dataset:
+        writer = tf.data.experimental.TFRecordWriter(os.path.join(out_dir, "psgs_subset_{:02d}.tfrecord".format(idx)))
+        writer.write(window)
+        idx += 1
+
+
+def load_tfrecord_tokenized_data_for_ctx_sources(
+    input_path: str,
+    max_context_length: int
+):
+    list_files = tf.io.gfile.listdir(input_path)
+    list_files.sort()
+    list_files = [os.path.join(input_path, ctx_file) for ctx_file in list_files]
+    
+    dataset = tf.data.Dataset.from_tensor_slices(list_files)
+    dataset = dataset.flat_map(
+        lambda x: tf.data.TFRecordDataset(x)
+    )
+
+    feature_description = {
+        'context_ids': tf.io.FixedLenFeature([max_context_length], tf.int64),
+        'passage_id': tf.io.FixedLenFeature([1], tf.string)
+    }
+    def _parse(example_proto):
+        return tf.io.parse_single_example(example_proto, feature_description)
+
+    dataset = dataset.map(
+        _parse,
+        num_parallel_calls=tf.data.AUTOTUNE,
+        deterministic=True
+    )
+
+    def _map_fn(element):
+        context_ids = element['context_ids']
+        context_ids = tf.cast(context_ids, dtype=tf.int32)
+        context_masks = tf.cast(context_ids > 0, tf.bool)
+        passage_id = tf.squeeze(element['passage_id'], axis=0)
+
+        return {
+            'context_ids': context_ids,
+            'context_masks': context_masks,
+            'passage_id': passage_id
+        }
+
+    dataset = dataset.map(
+        _map_fn,
+        num_parallel_calls=tf.data.AUTOTUNE,
+        deterministic=True
+    )
+
+    return dataset
+
+
+def main():
     parser = argparse.ArgumentParser()
+
     parser.add_argument("--jsonl-path", type=str, default="data/retriever/nq-train.jsonl")
     parser.add_argument("--tfrecord-text-path", type=str, default="data/retriever/V3/N5000-TEXT")
     parser.add_argument("--tfrecord-int-path", type=str, default="data/retriever/V3/N5000-INT")
+    parser.add_argument("--ctx-source-path", type=str, default="gs://openqa-dpr/data/wikipedia_split/shards-42031")
+    parser.add_argument("--ctx-tokenized-path", type=str, default="data/wikipedia_split/shards-42031-tfrecord")
+    parser.add_argument("--shard-size", type=int, default=42031)
+    parser.add_argument("--max-context-length", type=int, default=const.MAX_CONTEXT_LENGTH)
     parser.add_argument("--records-per-file", type=int, default=5000)
     parser.add_argument("--shuffle", type=eval, default=const.SHUFFLE)
     parser.add_argument("--shuffle-seed", type=int, default=const.SHUFFLE_SEED)
+    parser.add_argument("--pretrained-model", type=str, default=const.PRETRAINED_MODEL)
 
     args = parser.parse_args()
 
-    # build_tfrecord_text_data_from_jsonl(
-    #     input_path=args.jsonl_path,
-    #     out_dir=args.tfrecord_text_path,
-    #     records_per_file=args.records_per_file
-    # )
-
-    # tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
-    # build_tfrecord_int_data_from_tfrecord_text_data(
-    #     input_path=args.tfrecord_text_path,
-    #     out_dir=args.tfrecord_int_path,
-    #     tokenizer=tokenizer,
-    #     records_per_file=args.records_per_file,
-    #     shuffle=args.shuffle,
-    #     shuffle_seed=args.shuffle_seed
-    # )
-
-    dataset = load_retriever_tfrecord_int_data(
-        input_path='data/retriever/V3/N5000-INT',
-        shuffle=args.shuffle,
-        shuffle_seed=args.shuffle_seed
+    build_tfrecord_tokenized_data_for_ctx_sources(
+        ctx_source_path=args.ctx_source_path,
+        pretrained_model=args.pretrained_model,
+        out_dir=args.ctx_tokenized_path,
+        max_context_length=args.max_context_length,
+        shard_size=args.shard_size
     )
-    dataset = pad(dataset, max_query_length=32, max_context_length=256)
 
-    print("done")
+
+if __name__ == "__main__":
+    main()

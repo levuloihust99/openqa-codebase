@@ -31,8 +31,8 @@ def main():
     parser.add_argument("--checkpoint-path", type=str, default=const.CHECKPOINT_PATH)
     parser.add_argument("--ctx-encoder-trainable", type=eval, default=const.CTX_ENCODER_TRAINABLE, help="Whether the context encoder's weights are trainable")
     parser.add_argument("--question-encoder-trainable", type=eval, default=const.QUESTION_ENCODER_TRAINABLE, help="Whether the question encoder's weights are trainable")
-    parser.add_argument("--tpu", type=str, default="tpu-v3")
-    parser.add_argument("--pretrained-model", type=str, default="bert-base-uncased")
+    parser.add_argument("--tpu", type=str, default=const.TPU_NAME)
+    parser.add_argument("--pretrained-model", type=str, default=const.PRETRAINED_MODEL)
 
     args = parser.parse_args()
     epochs = args.epochs

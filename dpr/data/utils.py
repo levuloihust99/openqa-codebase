@@ -5,8 +5,6 @@ import time
 import json
 import tensorflow as tf
 
-from . import databuilder
-
 
 def unpack(gzip_file: str, out_file: str, chunk_size=1024**3):
     """Iteratively unpack a gzip file that cannot fit into memory
@@ -121,12 +119,11 @@ def split_ctx_sources(
     """
 
     reader = open(file_path, "rb")
-    if skip_header_row:
-        header_row = reader.readline() # skip the header row
+    header_row = reader.readline() # skip the header row
 
     idx = 0
     num_lines = 0
-    marked_pos = 0
+    marked_pos = len(header_row)
     flag = True
 
     while True:
@@ -136,8 +133,9 @@ def split_ctx_sources(
             break
 
         if flag:
-            writer = open(os.path.join(out_dir, "psgs_w100_{}.tsv".format(idx)), "wb")
-            writer.write(header_row)
+            writer = open(os.path.join(out_dir, "psgs_subset_{:02d}.tsv".format(idx)), "wb")
+            if not skip_header_row:
+                writer.write(header_row)
             flag = False
 
         matches = list(re.finditer(b"\n", bytes_read))
@@ -170,68 +168,6 @@ def split_ctx_sources(
     reader.close()
 
 
-def prepare_retriever_data(
-    input_path: str,
-    from_jsonl: bool=True,
-    store_intermediate_text_record: bool=True,
-    records_per_file: int = 5000,
-    max_files: int = -1,
-    bert_pretrained_model: str = 'bert-base-uncased'
-):
-    """Prepare tfrecord data from the original data (taken from DPR paper)
-
-    Args:
-        input_path (str): Path to the original data, i.e. data provided by DPR paper. Can be one-step preprocessed, i.e. already converted `.jsonl` extension
-        out_dir (str): Output directory that will contain `.tfrecord` data ready for training retriever model
-        from_jsonl (bool, optional): Whether the original data is in `.json` or `.jsonl` extension. Defaults to True.
-        store_intermediate_text_record (bool, optional): Whether to store the intermediate `.tfrecord` data (each record contains text data). Defaults to True.
-        records_per_file (int, optional): Number of records per `.tfrecord` file. Defaults to 5000.
-        max_sequence_length (int, optional): Maximum length of the documents after tokenizing, i.e. already added [SEP] and [CLS] tokens. 
-            Documents whose length exceed this max length will be truncated, but documents whose length is shorter is not padded (to save space when store in `.tfrecord` files).
-            Defaults to 256.
-    """
-    if not from_jsonl:
-        abspath = os.path.abspath(input_path)
-        dir_name = os.path.dirname(abspath)
-        json_line_path = os.path.join(dir_name, "nq-train.jsonl")
-
-        json_to_jsonline(abspath, json_line_path)
-        input_path = json_line_path
-
-    dir_name = os.path.dirname(input_path)
-    out_dir = os.path.join(dir_name, "N{}-INT".format(records_per_file))
-    if store_intermediate_text_record:
-
-        abspath = os.path.abspath(input_path)
-        text_tfrecord_path = os.path.join(os.path.dirname(input_path), "N{}-TEXT".format(records_per_file))
-        databuilder.main(
-            called_as_module=True,
-            input_path=input_path,
-            build_type=0,
-            max_files=max_files,
-            output_dir=text_tfrecord_path,
-            records_per_file=records_per_file,
-        )
-
-        databuilder.main(
-            called_as_module=True,
-            input_path=text_tfrecord_path + "/*",
-            build_type=1,
-            output_dir=out_dir,
-            records_per_file=records_per_file,
-            bert_pretrained_model=bert_pretrained_model,
-        )
-    
-    else:
-        databuilder.main(
-            called_as_module=True,
-            input_path=input_path,
-            build_type=2,
-            output_dir=out_dir,
-            bert_pretrained_model=bert_pretrained_model,
-            records_per_file=records_per_file,
-        )
-
 def benchmark(dataset: tf.data.Dataset):
     start_time = time.perf_counter()
     for _ in dataset:
@@ -241,11 +177,9 @@ def benchmark(dataset: tf.data.Dataset):
 
 
 if __name__ == "__main__":
-    prepare_retriever_data(
-        input_path="data/retriever/nq-train.json",
-        from_jsonl=False,
-        store_intermediate_text_record=True,
-        records_per_file=5000,
-        max_files=-1,
-        bert_pretrained_model='bert-base-uncased',
+    split_ctx_sources(
+        file_path="data/wikipedia_split/psgs_subset.tsv",
+        out_dir="data/wikipedia_split/shards-42031",
+        chunk_size=1024**2,
+        lines_per_file=42031, skip_header_row=True
     )
