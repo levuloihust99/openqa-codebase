@@ -240,7 +240,7 @@ def main():
     global args
     args = parser.parse_args()
     embeddings_path = os.path.join(args.embeddings_path, "shards-42031", args.model_type)
-    args_dict = {args.__dict__, "embeddings_path": embeddings_path}
+    args_dict = {**args.__dict__, "embeddings_path": embeddings_path}
 
     configs = ["{}: {}".format(k, v) for k, v in args_dict.items()]
     configs_string = "\t" + "\n\t".join(configs) + "\n"
