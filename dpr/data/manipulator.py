@@ -441,6 +441,85 @@ def load_tfrecord_tokenized_data_for_ctx_sources(
     return dataset
 
 
+def build_tfrecord_tokenized_data_for_qas(
+    pretrained_model: str,
+    qas_path: str,
+    out_dir: str,
+    max_query_length: int = 256,
+):
+    tokenizer = BertTokenizer.from_pretrained(pretrained_model)
+    text_dataset = tf.data.TextLineDataset(qas_path)
+
+    def _transform():
+        count = 0
+        for element in text_dataset:
+            question, answers = element.numpy().decode().split("\t")
+            question_ids = tokenizer.encode(question)
+            question_ids = question_ids[:max_query_length]
+            question_ids += [tokenizer.pad_token_id] * (max_query_length - len(question_ids))
+            question_ids[-1] = tokenizer.sep_token_id
+
+            count += 1
+            print("Count: {}".format(count))
+            
+            yield tf.convert_to_tensor(question_ids, dtype=tf.int32)
+
+    dataset = tf.data.Dataset.from_generator(
+        _transform,
+        output_signature=tf.TensorSpec([max_query_length], tf.int32)
+    )
+
+    def _serialize(element):
+        features = {
+            'question_ids': tf.train.Feature(int64_list=tf.train.Int64List(value=element))
+        }
+        example = tf.train.Example(features=tf.train.Features(feature=features))
+        return example.SerializeToString()
+
+    dataset = dataset.map(
+        lambda x: tf.py_function(_serialize, inp=[x], Tout=tf.string)
+    )
+
+    file_name = os.path.basename(qas_path).split(".")[0]
+    writer = tf.data.experimental.TFRecordWriter(os.path.join(out_dir, "{}.tfrecord".format(file_name)))
+    writer.write(dataset)
+
+
+def load_tfrecord_tokenized_data_for_qas(
+    qas_tfrecord_path: str,
+    max_query_length: int = 256
+):
+    dataset = tf.data.TFRecordDataset(qas_tfrecord_path)
+    feature_description = {
+        'question_ids': tf.io.FixedLenFeature([max_query_length], dtype=tf.int64)
+    }
+    def _parse(example_proto):
+        return tf.io.parse_single_example(example_proto, feature_description)
+
+    dataset = dataset.map(
+        _parse,
+        num_parallel_calls=tf.data.AUTOTUNE,
+        deterministic=True
+    )
+
+    def _map(element):
+        question_ids = element['question_ids']
+        question_ids = tf.cast(question_ids, tf.int32)
+        question_masks = tf.cast(question_ids > 0, tf.int32)
+
+        return {
+            'question_ids': question_ids,
+            'question_masks': question_masks
+        }
+
+    dataset = dataset.map(
+        _map,
+        num_parallel_calls=tf.data.AUTOTUNE,
+        deterministic=True
+    )
+    return dataset
+    
+
 def main():
     parser = argparse.ArgumentParser()
 
@@ -451,20 +530,29 @@ def main():
     parser.add_argument("--ctx-tokenized-path", type=str, default="data/wikipedia_split/shards-42031-tfrecord")
     parser.add_argument("--shard-size", type=int, default=42031)
     parser.add_argument("--max-context-length", type=int, default=const.MAX_CONTEXT_LENGTH)
+    parser.add_argument("--max-query-length", type=int, default=const.MAX_QUERY_LENGTH)
     parser.add_argument("--records-per-file", type=int, default=5000)
     parser.add_argument("--shuffle", type=eval, default=const.SHUFFLE)
     parser.add_argument("--shuffle-seed", type=int, default=const.SHUFFLE_SEED)
     parser.add_argument("--pretrained-model", type=str, default=const.PRETRAINED_MODEL)
+    parser.add_argument("--qas-path", type=str, default=const.QUERY_PATH)
+    parser.add_argument("--qas-tfrecord-path", type=str, default="data/qas/nq-test.tfrecord")
 
     args = parser.parse_args()
 
-    build_tfrecord_tokenized_data_for_ctx_sources(
-        ctx_source_path=args.ctx_source_path,
-        pretrained_model=args.pretrained_model,
-        out_dir=args.ctx_tokenized_path,
-        max_context_length=args.max_context_length,
-        shard_size=args.shard_size
+    # build_tfrecord_tokenized_data_for_qas(
+    #     pretrained_model=args.pretrained_model,
+    #     qas_path=args.qas_path,
+    #     out_dir=os.path.dirname(args.qas_path),
+    #     max_query_length=256
+    # )
+
+    dataset = load_tfrecord_tokenized_data_for_qas(
+        qas_tfrecord_path=args.qas_tfrecord_path,
+        max_query_length=256
     )
+
+    print("done")
 
 
 if __name__ == "__main__":

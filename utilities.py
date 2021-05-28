@@ -43,8 +43,8 @@ def spread_samples_greedy(global_batch_size, num_replicas, base_replica_batch_si
     return spread
 
 
-def spread_samples_equally(global_batch_size, num_replicas, base_replica_batch_size):
-    if global_batch_size < base_replica_batch_size:
+def spread_samples_equally(global_batch_size, num_replicas, base_replica_batch_size, init_batch_size):
+    if global_batch_size < init_batch_size:
         return [global_batch_size], -1, -1
 
     while global_batch_size < base_replica_batch_size * num_replicas:

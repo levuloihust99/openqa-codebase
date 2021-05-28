@@ -40,3 +40,4 @@ TOP_K = 100
 EVAL_BATCH_SIZE = 32
 RECORDS_PER_FILE = 42031
 EMBEDDINGS_DIR = "data/retriever_results"
+QAS_TFRECORD_PATH = "data/qas/nq-test.tfrecord"

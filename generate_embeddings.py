@@ -81,7 +81,8 @@ def run(
                 spread, global_batch_size, base_replica_batch_size = spread_samples_equally(
                     global_batch_size=global_batch_size,
                     num_replicas=strategy.num_replicas_in_sync,
-                    base_replica_batch_size=base_replica_batch_size
+                    base_replica_batch_size=base_replica_batch_size,
+                    init_batch_size=args.batch_size
                 )
 
                 if len(spread) > 1:
