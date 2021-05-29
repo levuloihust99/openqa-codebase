@@ -120,6 +120,8 @@ def split_ctx_sources(
 
     reader = open(file_path, "rb")
     header_row = reader.readline() # skip the header row
+    if not os.path.exists(out_dir):
+        os.makedirs(out_dir)
 
     idx = 0
     num_lines = 0

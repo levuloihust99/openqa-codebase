@@ -1,5 +1,6 @@
 import os
 import glob
+import pandas as pd
 
 import tensorflow as tf
 from transformers import BertTokenizer
@@ -325,17 +326,19 @@ def build_tfrecord_tokenized_data_for_ctx_sources(
 ):
     tokenizer = BertTokenizer.from_pretrained(pretrained_model)
     ctx_source_files = ["{}/psgs_subset_{:02d}.tsv".format(ctx_source_path, i) for i in range(17)]
-    ctx_source_files = tf.data.Dataset.from_tensor_slices(ctx_source_files)
-    text_dataset = ctx_source_files.flat_map(
-        map_func=lambda x: tf.data.TextLineDataset(x)
-    )
+    text_dataset = None
+    for ctx_source in ctx_source_files:
+        df = pd.read_csv(ctx_source, sep="\t", header=None, names=['id', 'text', 'title'])
+        if text_dataset is None:
+            text_dataset = df
+        else:
+            text_dataset = pd.concat([text_dataset, df], axis='index', ignore_index=True)
 
     def _transform():
         count = 0
-        for element in text_dataset:
-            passage = element.numpy().decode()
-            id, text, title = passage.split("\t")
-            passage_id = "wiki:" + id
+        for _, element in text_dataset.iterrows():
+            id, text, title = element.id, element.text, element.title
+            passage_id = "wiki:{}".format(id)
 
             text_tokens = tokenizer.tokenize(text)
             title_tokens = tokenizer.tokenize(title)
@@ -540,19 +543,13 @@ def main():
 
     args = parser.parse_args()
 
-    # build_tfrecord_tokenized_data_for_qas(
-    #     pretrained_model=args.pretrained_model,
-    #     qas_path=args.qas_path,
-    #     out_dir=os.path.dirname(args.qas_path),
-    #     max_query_length=256
-    # )
-
-    dataset = load_tfrecord_tokenized_data_for_qas(
-        qas_tfrecord_path=args.qas_tfrecord_path,
-        max_query_length=256
+    build_tfrecord_tokenized_data_for_ctx_sources(
+        pretrained_model=args.pretrained_model,
+        ctx_source_path="data/wikipedia_split/shards-42031",
+        out_dir="data/wikipedia_split/shards-42031-tfrecord",
+        max_context_length=256,
+        shard_size=100
     )
-
-    print("done")
 
 
 if __name__ == "__main__":
