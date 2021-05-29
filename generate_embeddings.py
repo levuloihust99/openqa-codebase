@@ -41,6 +41,8 @@ def run(
             )
 
             seq_output, pooled_output = outputs[0], outputs[1]
+            if not args.use_pooler:
+                pooled_output = seq_output[:, 0, :]
             return pooled_output
             
         per_replica_outputs = strategy.run(step_fn, args=(element,))
@@ -193,14 +195,14 @@ def main():
     parser.add_argument("--seed", type=int, default=const.SHUFFLE_SEED)
     parser.add_argument("--batch-size", type=int, default=const.EVAL_BATCH_SIZE)
     parser.add_argument("--tpu", type=str, default=const.TPU_NAME)
-    parser.add_argument("--gcloud-bucket", type=str, default=const.STORAGE_BUCKET)
-    parser.add_argument("--model-type", type=str, default=const.DEFAULT_MODEL)
     parser.add_argument("--max-context-length", type=int, default=const.MAX_CONTEXT_LENGTH, help="Maximum length of a document")
     parser.add_argument("--pretrained-model", type=str, default=const.PRETRAINED_MODEL)
+    parser.add_argument("--use-pooler", type=eval, default=True)
 
     global args
     args = parser.parse_args()
-    embeddings_path = os.path.join(args.embeddings_path, "shards-42031", args.model_type)
+    model_type = os.path.basename(args.checkpoint_path)
+    embeddings_path = os.path.join(args.embeddings_path, "shards-42031", model_type)
     args_dict = {**args.__dict__, "embeddings_path": embeddings_path}
 
     configs = ["{}: {}".format(k, v) for k, v in args_dict.items()]
