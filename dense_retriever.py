@@ -458,7 +458,7 @@ def main():
 
     indexer = create_or_retrieve_indexer(index_path=index_path, embeddings_path=embeddings_path)
     question_encoder = load_checkpoint(checkpoint_path=args.checkpoint_path, strategy=strategy)
-    answers = load_qas_test_data()
+    questions, answers = load_qas_test_data()
     dataset = prepare_dataset(
         args.qas_tfrecord_path,
         strategy=strategy,
