@@ -338,6 +338,9 @@ def build_tfrecord_tokenized_data_for_ctx_sources(
         count = 0
         for _, element in text_dataset.iterrows():
             id, text, title = element.id, element.text, element.title
+            id = str(id)
+            text = str(text)
+            title = str(title)
             passage_id = "wiki:{}".format(id)
 
             text_tokens = tokenizer.tokenize(text)
@@ -546,9 +549,9 @@ def main():
     build_tfrecord_tokenized_data_for_ctx_sources(
         pretrained_model=args.pretrained_model,
         ctx_source_path="data/wikipedia_split/shards-42031",
-        out_dir="data/wikipedia_split/shards-42031-tfrecord",
+        out_dir="data/wikipedia_split/shards-42031-tfrecord/test",
         max_context_length=256,
-        shard_size=100
+        shard_size=42031
     )
 
 
