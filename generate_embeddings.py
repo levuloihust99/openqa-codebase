@@ -24,7 +24,6 @@ def run(
     strategy,
     out_dir: str
 ):
-    @tf.function
     def eval_step(element):
         """The step function for one training step"""
         print("This function is tracing !")
@@ -47,6 +46,9 @@ def run(
             
         per_replica_outputs = strategy.run(step_fn, args=(element,))
         return per_replica_outputs
+
+    if not args.disable_tf_function:
+        eval_step = tf.function(eval_step)
 
     marked_time = time.perf_counter()
     begin = time.perf_counter()
@@ -198,6 +200,7 @@ def main():
     parser.add_argument("--max-context-length", type=int, default=const.MAX_CONTEXT_LENGTH, help="Maximum length of a document")
     parser.add_argument("--pretrained-model", type=str, default=const.PRETRAINED_MODEL)
     parser.add_argument("--use-pooler", type=eval, default=True)
+    parser.add_argument("--disable-tf-function", type=eval, default=False)
 
     global args
     args = parser.parse_args()
@@ -213,11 +216,6 @@ def main():
 
     config_path = "configs/{}/{}/config.yml".format(__file__.rstrip(".py"), datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     write_config(config_path, args_dict)
-
-    print("******************* Configurations *******************\n")
-    configs = ["{}: {}".format(k, v) for k, v in args.__dict__.items()]
-    configs_string = "\t" + "\n\t".join(configs) + "\n"
-    print(configs_string)
 
     try: # detect TPUs
         resolver = tf.distribute.cluster_resolver.TPUClusterResolver(tpu=args.tpu) # TPU detection

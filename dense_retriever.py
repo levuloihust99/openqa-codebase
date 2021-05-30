@@ -184,8 +184,11 @@ def generate_embeddings(
                 training=False
             )
 
-            pooled = outputs.pooler_output
-            return pooled
+            seq_output = outputs.last_hidden_state
+            pooled_output = outputs.pooler_output
+            if not args.use_pooler:
+                pooled_output = seq_output[:, 0, :]
+            return pooled_output
     
         per_replica_outputs = strategy.run(step_fn, args=(element,))
         return per_replica_outputs
@@ -415,6 +418,7 @@ def main():
     parser.add_argument("--max-query-length", type=int, default=const.MAX_QUERY_LENGTH)
     parser.add_argument("--disable-tf-function", type=eval, default=False)
     parser.add_argument("--tpu", type=str, default=const.TPU_NAME)
+    parser.add_argument("--use-pooler", type=eval, default=True)
 
     global args
     args = parser.parse_args()
