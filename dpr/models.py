@@ -13,11 +13,13 @@ class BiEncoder(keras.Model):
         self,
         question_model: TFBertModel,
         ctx_model: TFBertModel,
+        use_pooler: True,
         **kwargs
     ):
         super(BiEncoder, self).__init__(**kwargs)
         self.question_model = question_model
         self.ctx_model = ctx_model
+        self.use_pooler = use_pooler
     
     def call(
         self,
@@ -40,5 +42,8 @@ class BiEncoder(keras.Model):
             **kwargs
         )
         ctx_sequence, ctx_pooled = ctx_outputs[0], ctx_outputs[1]
+        if not self.use_pooler:
+            q_pooled = q_sequence[:, 0, :]
+            ctx_pooled = ctx_sequence[:, 0, :]
 
         return q_pooled, ctx_pooled

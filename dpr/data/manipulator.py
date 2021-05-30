@@ -545,15 +545,7 @@ def main():
     parser.add_argument("--qas-tfrecord-path", type=str, default="data/qas/nq-test.tfrecord")
 
     args = parser.parse_args()
-
-    build_tfrecord_tokenized_data_for_ctx_sources(
-        pretrained_model=args.pretrained_model,
-        ctx_source_path="data/wikipedia_split/shards-42031",
-        out_dir="data/wikipedia_split/shards-42031-tfrecord/test",
-        max_context_length=256,
-        shard_size=42031
-    )
-
+    # TODO: build tfrecord dataset
 
 if __name__ == "__main__":
     main()

@@ -35,6 +35,8 @@ def main():
     parser.add_argument("--question-encoder-trainable", type=eval, default=const.QUESTION_ENCODER_TRAINABLE, help="Whether the question encoder's weights are trainable")
     parser.add_argument("--tpu", type=str, default=const.TPU_NAME)
     parser.add_argument("--pretrained-model", type=str, default=const.PRETRAINED_MODEL)
+    parser.add_argument("--loss-fn", type=str, choices=['inbatch', 'threelevel'], default='threelevel')
+    parser.add_argument("--use-pooler", type=eval, default=True)
 
     args = parser.parse_args()
     args_dict = args.__dict__
@@ -85,6 +87,14 @@ def main():
         max_context_length=args.max_context_length, 
         max_query_length=args.max_query_length
     )
+    if args.loss_fn == 'inbatch':
+        dataset = dataset.map(
+            lambda x: {
+                'question': x['question'],
+                'contexts': x['contexts'][:2]
+            },
+            num_parallel_calls=tf.data.AUTOTUNE,
+        )
     dataset = dataset.shuffle(buffer_size=60000)
     dataset = dataset.repeat()
     dataset = dataset.batch(args.batch_size)
@@ -125,9 +135,14 @@ def main():
             trainable=args.ctx_encoder_trainable,
         )
 
+        if not args.use_pooler:
+            question_encoder.bert.pooler.trainable = False
+            context_encoder.bert.pooler.trainable = False
+
         retriever = models.BiEncoder(
             question_model=question_encoder,
             ctx_model=context_encoder,
+            use_pooler=args.use_pooler
         )
 
         # Instantiate the optimizer
@@ -143,7 +158,10 @@ def main():
         )
 
         # Define loss function
-        loss_fn = losses.ThreeLevelDPRLoss(batch_size=args.batch_size)
+        if args.loss_fn == 'threelevel':
+            loss_fn = losses.ThreeLevelDPRLoss(batch_size=args.batch_size)
+        else:
+            loss_fn = losses.InBatchDPRLoss(batch_size=args.batch_size)
 
 
     """
