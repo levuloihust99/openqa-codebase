@@ -47,15 +47,14 @@ class ThreeLevelDPRLoss():
     def __init__(self, batch_size):
         self.batch_size = batch_size
         self.binary_crossentropy_loss_fn = tf.keras.losses.BinaryCrossentropy(from_logits=False, reduction=tf.keras.losses.Reduction.NONE)
-
+        target_scores = tf.concat([tf.ones([7], dtype=tf.float32), tf.zeros([self.batch_size - 1], dtype=tf.float32)], axis=0)
+        self.target_scores = tf.tile(tf.expand_dims(target_scores, axis=0), multiples=[self.batch_size, 1]) / 7
+    
     def __call__(
         self,
         q_tensors: tf.Tensor,
         ctx_tensors: tf.Tensor
     ):
-        target_scores = tf.concat([tf.ones([7], dtype=tf.float32), tf.zeros([self.batch_size - 1], dtype=tf.float32)], axis=0)
-        target_scores = tf.tile(tf.expand_dims(target_scores, axis=0), multiples=[self.batch_size, 1]) / 7
-
         # Positive vs hard negative (of the same sample)
         ctx_tensors_within = tf.reshape(ctx_tensors, [self.batch_size, 8, -1])
         q_tensors_within = tf.expand_dims(q_tensors, 1)
@@ -87,5 +86,5 @@ class ThreeLevelDPRLoss():
         scores_concat = tf.concat([scores_within_cut, scores_inbatch_cut], axis=-1)
         scores_concat = tf.math.softmax(scores_concat, axis=-1)
 
-        binary_loss = self.binary_crossentropy_loss_fn(target_scores, scores_concat)
+        binary_loss = self.binary_crossentropy_loss_fn(self.target_scores, scores_concat)
         return nll_loss_within + inbatch_loss + binary_loss
