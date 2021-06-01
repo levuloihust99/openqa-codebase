@@ -524,7 +524,90 @@ def load_tfrecord_tokenized_data_for_qas(
         deterministic=True
     )
     return dataset
-    
+
+
+def build_tfrecord_tokenized_data_for_qas_ver2(
+    pretrained_model: str,
+    qas_path: str,
+    out_dir: str,
+):
+    tokenizer = BertTokenizer.from_pretrained(pretrained_model)
+    text_dataset = tf.data.TextLineDataset(qas_path)
+
+    def _transform():
+        for element in text_dataset:
+            question, answers = element.numpy().decode().split("\t")
+            question_ids = tokenizer.encode(question)
+            question_ids = tf.convert_to_tensor(question_ids)
+            yield tf.sparse.from_dense(question_ids)
+
+    sparse_dataset = tf.data.Dataset.from_generator(
+        _transform,
+        output_signature=tf.SparseTensorSpec(shape=[None], dtype=tf.int32)
+    )
+
+    def _serialize(element):
+        element_serialized = tf.io.serialize_tensor(tf.io.serialize_sparse(element))
+        features = {
+            'question_serialized': tf.train.Feature(bytes_list=tf.train.BytesList(value=[element_serialized.numpy()])) 
+        }
+        example = tf.train.Example(features=tf.train.Features(feature=features))
+        return example.SerializeToString()
+
+    def _generator():
+        count = 0
+        for element in sparse_dataset:
+            yield _serialize(element)
+            count += 1
+            print("Count: {}".format(count))
+
+    dataset = tf.data.Dataset.from_generator(
+        _generator,
+        output_signature=tf.TensorSpec([], tf.string)
+    )
+
+    file_name = os.path.basename(qas_path).split(".")[0]
+    writer = tf.data.experimental.TFRecordWriter(os.path.join(out_dir, "{}-ver2.tfrecord".format(file_name)))
+    writer.write(dataset)
+
+
+def load_tfrecord_tokenized_data_for_qas_ver2(
+    qas_tfrecord_path: str,
+    sep_token_id,
+    max_query_length: int = 256
+):
+    dataset = tf.data.TFRecordDataset(qas_tfrecord_path)
+
+    feature_description = {
+        'question_serialized': tf.io.FixedLenFeature([1], tf.string)
+    }
+    def _parse(example_proto):
+        record = tf.io.parse_single_example(example_proto, feature_description)
+        question_serialized = tf.io.parse_tensor(record['question_serialized'][0], out_type=tf.string)
+        question_ids = tf.io.parse_tensor(question_serialized[1], out_type=tf.int32)
+        question_ids = tf.pad(question_ids, [[0, max_query_length]])[:max_query_length]
+        question_ids = tf.tensor_scatter_nd_update(question_ids, indices=[[max_query_length - 1]], updates=[sep_token_id])
+        question_masks = tf.cast(question_ids > 0, tf.int32)
+
+        return {
+            'question_ids': question_ids,
+            'question_masks': question_masks
+        }
+
+    dataset = dataset.map(
+        _parse,
+        num_parallel_calls=tf.data.AUTOTUNE,
+        deterministic=True
+    )
+    dataset = dataset.map(
+        lambda x: {
+            'question_ids': tf.reshape(x['question_ids'], [max_query_length]),
+            'question_masks': tf.reshape(x['question_masks'], [max_query_length])
+        },
+        num_parallel_calls=tf.data.AUTOTUNE,
+        deterministic=True
+    )
+    return dataset
 
 def main():
     parser = argparse.ArgumentParser()
@@ -546,6 +629,7 @@ def main():
 
     args = parser.parse_args()
     # TODO: build tfrecord dataset
+    
 
 if __name__ == "__main__":
     main()

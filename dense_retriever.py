@@ -145,12 +145,13 @@ def transform_to_tensors(
     )
 
 
-def prepare_dataset(qas_tfrecord_path, strategy, max_query_length: int = 256):
+def prepare_dataset(qas_tfrecord_path, strategy, tokenizer, max_query_length: int = 256):
     print("Preparing dataset for inference... ", end="")
     sys.stdout.flush()
 
-    dataset = manipulator.load_tfrecord_tokenized_data_for_qas(
+    dataset = manipulator.load_tfrecord_tokenized_data_for_qas_ver2(
         qas_tfrecord_path=qas_tfrecord_path,
+        sep_token_id=tokenizer.sep_token_id,
         max_query_length=max_query_length
     )
     dataset = dataset.batch(args.batch_size).prefetch(tf.data.AUTOTUNE)
@@ -463,9 +464,11 @@ def main():
     indexer = create_or_retrieve_indexer(index_path=index_path, embeddings_path=embeddings_path)
     question_encoder = load_checkpoint(checkpoint_path=args.checkpoint_path, strategy=strategy)
     questions, answers = load_qas_test_data()
+    tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
     dataset = prepare_dataset(
         args.qas_tfrecord_path,
         strategy=strategy,
+        tokenizer=tokenizer,
         max_query_length=args.max_query_length
     )
     question_embeddings = generate_embeddings(question_encoder=question_encoder, dataset=dataset, strategy=strategy)

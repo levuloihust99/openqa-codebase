@@ -7,6 +7,7 @@ import argparse
 import time
 from tqdm import tqdm
 from datetime import datetime
+import copy
 
 from dpr import const, models, losses, optimizers
 from dpr.data import manipulator
@@ -34,9 +35,12 @@ def main():
     parser.add_argument("--ctx-encoder-trainable", type=eval, default=const.CTX_ENCODER_TRAINABLE, help="Whether the context encoder's weights are trainable")
     parser.add_argument("--question-encoder-trainable", type=eval, default=const.QUESTION_ENCODER_TRAINABLE, help="Whether the question encoder's weights are trainable")
     parser.add_argument("--tpu", type=str, default=const.TPU_NAME)
-    parser.add_argument("--pretrained-model", type=str, default=const.PRETRAINED_MODEL)
-    parser.add_argument("--loss-fn", type=str, choices=['inbatch', 'threelevel'], default='threelevel')
+    parser.add_argument("--loss-fn", type=str, choices=['inbatch', 'threelevel', 'twolevel'], default='threelevel')
     parser.add_argument("--use-pooler", type=eval, default=True)
+    parser.add_argument("--load-optimizer", type=eval, default=True)
+    parser.add_argument("--tokenizer", type=str, default="bert-base-uncased")
+    parser.add_argument("--pretrained-model", type=str, default=const.PRETRAINED_MODEL)
+    parser.add_argument("--within-size", type=int, default=8)
 
     args = parser.parse_args()
     args_dict = args.__dict__
@@ -66,7 +70,7 @@ def main():
             strategy = tf.distribute.get_strategy()
 
     tf.random.set_seed(args.seed)
-    tokenizer = BertTokenizer.from_pretrained(args.pretrained_model)
+    tokenizer = BertTokenizer.from_pretrained(args.tokenizer)
 
     """Data pipeline
     1. Load retriever data (in `.tfrecord` format, stored serialized `tf.int32` tensor)
@@ -94,6 +98,13 @@ def main():
                 'contexts': x['contexts'][:2]
             },
             num_parallel_calls=tf.data.AUTOTUNE,
+        )
+    else:
+        dataset = dataset.map(
+            lambda x: {
+                'question': x['question'],
+                'contexts': x['contexts'][:args.within_size]
+            }
         )
     dataset = dataset.shuffle(buffer_size=60000)
     dataset = dataset.repeat()
@@ -160,6 +171,8 @@ def main():
         # Define loss function
         if args.loss_fn == 'threelevel':
             loss_fn = losses.ThreeLevelDPRLoss(batch_size=args.batch_size)
+        elif args.loss_fn == 'twolevel':
+            loss_fn = losses.TwoLevelDPRLoss(batch_size=args.batch_size, within_size=args.within_size)
         else:
             loss_fn = losses.InBatchDPRLoss(batch_size=args.batch_size)
 
@@ -208,19 +221,27 @@ def main():
         checkpoint_path = args.checkpoint_path
         ckpt = tf.train.Checkpoint(
             model=retriever,
-            optimizer=optimizer,
             current_epoch=tf.Variable(0)
         )
-        ckpt_manager = tf.train.CheckpointManager(ckpt, checkpoint_path, max_to_keep=3)
+        if not args.load_optimizer:
+            tmp_optimizer = copy.deepcopy(optimizer)
+            ckpt.optimizer = tmp_optimizer
+        else:
+            ckpt.optimizer = optimizer
+
+        ckpt_manager = tf.train.CheckpointManager(ckpt, checkpoint_path, max_to_keep=40)
 
         # if a checkpoint exists, restore the latest checkpoint
         if ckpt_manager.latest_checkpoint:
-            ckpt.restore(ckpt_manager.latest_checkpoint)
+            ckpt.restore(ckpt_manager.latest_checkpoint).expect_partial()
             current_epoch = ckpt.current_epoch.numpy()
             print("Latest checkpoint restored -- Model trained for {} epochs".format(current_epoch))
         else:
             print("Checkpoint not found. Train from scratch")
             current_epoch = 0
+        
+        if not args.load_optimizer:
+            ckpt.optimizer = optimizer
 
 
     """
