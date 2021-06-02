@@ -20,7 +20,7 @@ python train_retriever.py \
     --max-query-length 256 \
     --batch-size 16 \
     --epochs $run_epochs \
-    --learning-rate 1e-6 \
+    --learning-rate 2e-5 \
     --warmup-steps 100 \
     --adam-eps 1e-8 \
     --adam-betas "(0.9, 0.999)" \
@@ -35,4 +35,6 @@ python train_retriever.py \
     --pretrained-model bert-base-uncased \
     --loss-fn threelevel \
     --use-pooler False \
-    --load-optimizer False
+    --tokenizer bert-base-uncased \
+    --load-optimizer True \
+    --within-size 8
