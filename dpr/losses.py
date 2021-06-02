@@ -44,11 +44,12 @@ class NLLDPRLoss():
 
 
 class ThreeLevelDPRLoss():
-    def __init__(self, batch_size):
+    def __init__(self, batch_size, within_size):
         self.batch_size = batch_size
+        self.within_size = within_size
         self.binary_crossentropy_loss_fn = tf.keras.losses.BinaryCrossentropy(from_logits=False, reduction=tf.keras.losses.Reduction.NONE)
-        target_scores = tf.concat([tf.ones([7], dtype=tf.float32), tf.zeros([self.batch_size - 1], dtype=tf.float32)], axis=0)
-        self.target_scores = tf.tile(tf.expand_dims(target_scores, axis=0), multiples=[self.batch_size, 1]) / 7
+        target_scores = tf.concat([tf.ones([within_size - 1], dtype=tf.float32), tf.zeros([batch_size - 1], dtype=tf.float32)], axis=0)
+        self.target_scores = tf.tile(tf.expand_dims(target_scores, axis=0), multiples=[batch_size, 1]) / (within_size - 1)
     
     def __call__(
         self,
@@ -56,24 +57,24 @@ class ThreeLevelDPRLoss():
         ctx_tensors: tf.Tensor
     ):
         # Positive vs hard negative (of the same sample)
-        ctx_tensors_within = tf.reshape(ctx_tensors, [self.batch_size, 8, -1])
+        ctx_tensors_within = tf.reshape(ctx_tensors, [self.batch_size, self.within_size, -1])
         q_tensors_within = tf.expand_dims(q_tensors, 1)
         scores_within = tf.matmul(q_tensors_within, tf.transpose(ctx_tensors_within, perm=[0, 2, 1]))
         scores_within = tf.squeeze(scores_within, axis=1)
-        scores_within = -tf.math.log_softmax(scores_within, axis=-1)
+        scores_within_logsoftmax = -tf.math.log_softmax(scores_within, axis=-1)
         indices = tf.concat([tf.expand_dims(tf.range(self.batch_size), axis=1), tf.zeros([self.batch_size, 1], dtype=tf.int32)], axis=1)
-        nll_loss_within = tf.gather_nd(scores_within, indices=indices)
+        nll_loss_within = tf.gather_nd(scores_within_logsoftmax, indices=indices)
 
         # Positive vs other positives (in batch)
         ctx_tensors_inbatch = ctx_tensors_within[:, 0, :]
         scores_inbatch = tf.matmul(q_tensors, tf.transpose(ctx_tensors_inbatch, perm=[1, 0]))
-        scores_inbatch = -tf.math.log_softmax(scores_inbatch, axis=-1)
+        scores_inbatch_logsoftmax = -tf.math.log_softmax(scores_inbatch, axis=-1)
         indices = tf.tile(tf.expand_dims(tf.range(self.batch_size), axis=1), multiples=[1, 2])
-        inbatch_loss = tf.gather_nd(scores_inbatch, indices=indices)
+        inbatch_loss = tf.gather_nd(scores_inbatch_logsoftmax, indices=indices)
 
         # Hard negative vs other positives
-        dim_0_indices_within = tf.tile(tf.expand_dims(tf.range(self.batch_size), axis=1), multiples=[1, 7])
-        dim_1_indices_within = tf.tile(tf.expand_dims(tf.range(1, 8), axis=0), multiples=[self.batch_size, 1])
+        dim_0_indices_within = tf.tile(tf.expand_dims(tf.range(self.batch_size), axis=1), multiples=[1, self.within_size - 1])
+        dim_1_indices_within = tf.tile(tf.expand_dims(tf.range(1, self.within_size), axis=0), multiples=[self.batch_size, 1])
         indices_within = tf.concat([tf.expand_dims(dim_0_indices_within, axis=-1), tf.expand_dims(dim_1_indices_within, axis=-1)], axis=-1)
         scores_within_cut = tf.gather_nd(scores_within, indices_within)
 
@@ -106,16 +107,104 @@ class TwoLevelDPRLoss():
         q_tensors_within = tf.expand_dims(q_tensors, 1)
         scores_within = tf.matmul(q_tensors_within, tf.transpose(ctx_tensors_within, perm=[0, 2, 1]))
         scores_within = tf.squeeze(scores_within, axis=1)
-        scores_within = -tf.math.log_softmax(scores_within, axis=-1)
+        scores_within_logsoftmax = -tf.math.log_softmax(scores_within, axis=-1)
         indices = tf.concat([tf.expand_dims(tf.range(self.batch_size), axis=1), tf.zeros([self.batch_size, 1], dtype=tf.int32)], axis=1)
-        nll_loss_within = tf.gather_nd(scores_within, indices=indices)
+        nll_loss_within = tf.gather_nd(scores_within_logsoftmax, indices=indices)
 
         # Positive vs other positives (in batch)
         ctx_tensors_inbatch = ctx_tensors_within[:, 0, :]
         scores_inbatch = tf.matmul(q_tensors, tf.transpose(ctx_tensors_inbatch, perm=[1, 0]))
-        scores_inbatch = -tf.math.log_softmax(scores_inbatch, axis=-1)
+        scores_inbatch_logsoftmax = -tf.math.log_softmax(scores_inbatch, axis=-1)
         indices = tf.tile(tf.expand_dims(tf.range(self.batch_size), axis=1), multiples=[1, 2])
-        inbatch_loss = tf.gather_nd(scores_inbatch, indices=indices)
+        inbatch_loss = tf.gather_nd(scores_inbatch_logsoftmax, indices=indices)
 
         return nll_loss_within + inbatch_loss
 
+
+class HardNegVsNegDPRLoss():
+    def __init__(self, batch_size, within_size):
+        self.batch_size = batch_size
+        self.within_size = within_size
+        self.binary_crossentropy_loss_fn = tf.keras.losses.BinaryCrossentropy(from_logits=False, reduction=tf.keras.losses.Reduction.NONE)
+        target_scores = tf.concat([tf.ones([within_size - 1], dtype=tf.float32), tf.zeros([batch_size - 1], dtype=tf.float32)], axis=0)
+        self.target_scores = tf.tile(tf.expand_dims(target_scores, axis=0), multiples=[batch_size, 1]) / (within_size - 1)
+    
+    def __call__(
+        self,
+        q_tensors: tf.Tensor,
+        ctx_tensors: tf.Tensor
+    ):
+        # Positive vs hard negative (of the same sample)
+        ctx_tensors_within = tf.reshape(ctx_tensors, [self.batch_size, self.within_size, -1])
+        q_tensors_within = tf.expand_dims(q_tensors, 1)
+        scores_within = tf.matmul(q_tensors_within, tf.transpose(ctx_tensors_within, perm=[0, 2, 1]))
+        scores_within = tf.squeeze(scores_within, axis=1)
+        scores_within_logsoftmax = -tf.math.log_softmax(scores_within, axis=-1)
+        indices = tf.concat([tf.expand_dims(tf.range(self.batch_size), axis=1), tf.zeros([self.batch_size, 1], dtype=tf.int32)], axis=1)
+        nll_loss_within = tf.gather_nd(scores_within_logsoftmax, indices=indices)
+
+        # Hard negative vs other positives
+        ctx_tensors_inbatch = ctx_tensors_within[:, 0, :]
+        scores_inbatch = tf.matmul(q_tensors, tf.transpose(ctx_tensors_inbatch, perm=[1, 0]))
+
+        dim_0_indices_within = tf.tile(tf.expand_dims(tf.range(self.batch_size), axis=1), multiples=[1, self.within_size - 1])
+        dim_1_indices_within = tf.tile(tf.expand_dims(tf.range(1, self.within_size), axis=0), multiples=[self.batch_size, 1])
+        indices_within = tf.concat([tf.expand_dims(dim_0_indices_within, axis=-1), tf.expand_dims(dim_1_indices_within, axis=-1)], axis=-1)
+        scores_within_cut = tf.gather_nd(scores_within, indices_within)
+
+        dim_0_indices_inbatch = tf.tile(tf.expand_dims(tf.range(self.batch_size), axis=1), multiples=[1, self.batch_size - 1])
+        dim_1_indices_inbatch = [tf.concat([tf.range(i), tf.range(i + 1, self.batch_size)], axis=0) for i in range(self.batch_size)]
+        dim_1_indices_inbatch = tf.convert_to_tensor(dim_1_indices_inbatch)
+        indices_inbatch = tf.concat([tf.expand_dims(dim_0_indices_inbatch, axis=-1), tf.expand_dims(dim_1_indices_inbatch, axis=-1)], axis=-1)
+        scores_inbatch_cut = tf.gather_nd(scores_inbatch, indices=indices_inbatch)
+        
+        scores_concat = tf.concat([scores_within_cut, scores_inbatch_cut], axis=-1)
+        scores_concat_prob = tf.math.softmax(scores_concat, axis=-1)
+
+        binary_loss = self.binary_crossentropy_loss_fn(self.target_scores, scores_concat_prob)
+
+        return nll_loss_within + binary_loss
+
+
+class HardNegVsNegSoftMaxDPRLoss():
+    def __init__(self, batch_size, within_size):
+        self.batch_size = batch_size
+        self.within_size = within_size
+    
+    def __call__(
+        self,
+        q_tensors: tf.Tensor,
+        ctx_tensors: tf.Tensor
+    ):
+        # Positive vs hard negative (of the same sample)
+        ctx_tensors_within = tf.reshape(ctx_tensors, [self.batch_size, self.within_size, -1])
+        q_tensors_within = tf.expand_dims(q_tensors, 1)
+        scores_within = tf.matmul(q_tensors_within, tf.transpose(ctx_tensors_within, perm=[0, 2, 1]))
+        scores_within = tf.squeeze(scores_within, axis=1)
+        scores_within_logsoftmax = -tf.math.log_softmax(scores_within, axis=-1)
+        indices = tf.concat([tf.expand_dims(tf.range(self.batch_size), axis=1), tf.zeros([self.batch_size, 1], dtype=tf.int32)], axis=1)
+        nll_loss_within = tf.gather_nd(scores_within_logsoftmax, indices=indices)
+
+        # Hard negative vs other positives
+        ctx_tensors_inbatch = ctx_tensors_within[:, 0, :]
+        scores_inbatch = tf.matmul(q_tensors, tf.transpose(ctx_tensors_inbatch, perm=[1, 0]))
+        
+        dim_0_indices_within = tf.tile(tf.expand_dims(tf.range(self.batch_size), axis=1), multiples=[1, self.within_size - 1])
+        dim_1_indices_within = tf.tile(tf.expand_dims(tf.range(1, self.within_size), axis=0), multiples=[self.batch_size, 1])
+        indices_within = tf.concat([tf.expand_dims(dim_0_indices_within, axis=-1), tf.expand_dims(dim_1_indices_within, axis=-1)], axis=-1)
+        scores_within_cut = tf.gather_nd(scores_within, indices_within)
+
+        dim_0_indices_inbatch = tf.tile(tf.expand_dims(tf.range(self.batch_size), axis=1), multiples=[1, self.batch_size - 1])
+        dim_1_indices_inbatch = [tf.concat([tf.range(i), tf.range(i + 1, self.batch_size)], axis=0) for i in range(self.batch_size)]
+        dim_1_indices_inbatch = tf.convert_to_tensor(dim_1_indices_inbatch)
+        indices_inbatch = tf.concat([tf.expand_dims(dim_0_indices_inbatch, axis=-1), tf.expand_dims(dim_1_indices_inbatch, axis=-1)], axis=-1)
+        scores_inbatch_cut = tf.gather_nd(scores_inbatch, indices=indices_inbatch)
+
+        scores_within_cut_extend = tf.expand_dims(scores_within_cut, axis=-1)
+        scores_inbatch_cut_extend = tf.tile(tf.expand_dims(scores_inbatch_cut, axis=1), multiples=[1, self.within_size - 1, 1])
+        scores_concat = tf.concat([scores_within_cut_extend, scores_inbatch_cut_extend], axis=-1)
+        scores_concat_prob = -tf.math.log_softmax(scores_concat, axis=-1)
+        scores_concat_prob = scores_concat_prob[:, :, 0]
+        hardnegvsneg_loss = tf.reduce_sum(scores_concat_prob, axis=-1)
+
+        return nll_loss_within, hardnegvsneg_loss
