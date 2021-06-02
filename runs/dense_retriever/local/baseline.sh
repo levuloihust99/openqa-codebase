@@ -13,4 +13,7 @@ python dense_retriever.py \
     --qas-tfrecord-path data/qas/nq-test.tfrecord \
     --reader-data-path data/reader \
     --result-path results \
-    --top-k 100
+    --top-k 100 \
+    --tpu tpu-v3 \
+    --disable-tf-function False \
+    --use-pooler False \

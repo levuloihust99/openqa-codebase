@@ -14,4 +14,6 @@ python dense_retriever.py \
     --reader-data-path data/reader \
     --result-path results \
     --top-k 100 \
-    --tpu tpu-v3
+    --tpu tpu-v3 \
+    --use-pooler False \
+    --disable-tf-function False

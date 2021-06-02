@@ -2,7 +2,7 @@
 cd ~/openqa-codebase
 python dense_retriever.py \
     --batch-size 16 \
-    --checkpoint-path checkpoints/retriever/V3-base \
+    --checkpoint-path checkpoints/retriever/inbatch_batch16_query256 \
     --ctx-source-path data/wikipedia_split/psgs_subset.tsv \
     --disable-tf-function True \
     --embeddings-path data/retriever_results \
@@ -13,4 +13,7 @@ python dense_retriever.py \
     --qas-tfrecord-path data/qas/nq-test.tfrecord \
     --reader-data-path data/reader \
     --result-path results \
-    --top-k 100
+    --top-k 100 \
+    --tpu tpu-v3 \
+    --disable-tf-function False \
+    --use-pooler False \

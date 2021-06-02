@@ -1,6 +1,6 @@
 #!/bin/bash
 cd ~/openqa-codebase
-python generate_embeddings.sh \
+python generate_embeddings.py \
     --batch-size 1024 \
     --checkpoint-path gs://openqa-dpr/checkpoints/retriever/baseline \
     --ctx-source-shards-tfrecord gs://openqa-dpr/data/wikipedia_split/shards-42031-tfrecord \

@@ -20,7 +20,7 @@ python train_retriever.py \
     --max-query-length 256 \
     --batch-size 16 \
     --epochs $run_epochs \
-    --learning-rate 1e-6 \
+    --learning-rate 2e-5 \
     --warmup-steps 100 \
     --adam-eps 1e-8 \
     --adam-betas "(0.9, 0.999)" \
@@ -28,11 +28,12 @@ python train_retriever.py \
     --max-grad-norm 2.0 \
     --shuffle True \
     --seed 123 \
-    --checkpoint-path gs://openqa-dpr/checkpoints/retriever/threelevel_batch16_query256 \
+    --checkpoint-path gs://openqa-dpr/checkpoints/retriever/twolevel_batch16_query256 \
     --ctx-encoder-trainable True \
     --question-encoder-trainable True \
     --tpu $run_tpu \
     --pretrained-model bert-base-uncased \
-    --loss-fn threelevel \
+    --loss-fn twolevel \
     --use-pooler False \
-    --load-optimizer False
+    --load-optimizer True \
+    --tokenizer bert-base-uncased
