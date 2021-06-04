@@ -25,10 +25,10 @@ python train_retriever.py \
     --adam-eps 1e-8 \
     --adam-betas "(0.9, 0.999)" \
     --weight-decay 0.0 \
-    --max-grad-norm 2.0 \
+    --max-grad-norm 3.0 \
     --shuffle True \
     --seed 123 \
-    --checkpoint-path gs://openqa-dpr/checkpoints/retriever/hardnegvsnegsoftmax_batch16_query32 \
+    --checkpoint-path gs://openqa-dpr/checkpoints/retriever/hardnegvsnegsoftmax_batch16_query32_gradnorm3 \
     --ctx-encoder-trainable True \
     --question-encoder-trainable True \
     --tpu $run_tpu \

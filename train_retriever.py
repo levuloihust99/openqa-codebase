@@ -35,7 +35,7 @@ def main():
     parser.add_argument("--ctx-encoder-trainable", type=eval, default=const.CTX_ENCODER_TRAINABLE, help="Whether the context encoder's weights are trainable")
     parser.add_argument("--question-encoder-trainable", type=eval, default=const.QUESTION_ENCODER_TRAINABLE, help="Whether the question encoder's weights are trainable")
     parser.add_argument("--tpu", type=str, default=const.TPU_NAME)
-    parser.add_argument("--loss-fn", type=str, choices=['inbatch', 'threelevel', 'twolevel', 'hardnegvsneg'], default='threelevel')
+    parser.add_argument("--loss-fn", type=str, choices=['inbatch', 'threelevel', 'twolevel', 'hardnegvsneg', 'hardnegvsnegsoftmax', 'threelevelsoftmax'], default='threelevel')
     parser.add_argument("--use-pooler", type=eval, default=True)
     parser.add_argument("--load-optimizer", type=eval, default=True)
     parser.add_argument("--tokenizer", type=str, default="bert-base-uncased")
@@ -177,6 +177,8 @@ def main():
             loss_fn = losses.HardNegVsNegDPRLoss(batch_size=args.batch_size, within_size=args.within_size)
         elif args.loss_fn == 'hardnegvsnegsoftmax':
             loss_fn = losses.HardNegVsNegSoftMaxDPRLoss(batch_size=args.batch_size, within_size=args.within_size)
+        elif args.loss_fn == 'threelevelsoftmax':
+            loss_fn = losses.ThreeLevelSoftMaxDPRLoss(batch_size=args.batch_size, within_size=args.within_size)
         else:
             loss_fn = losses.InBatchDPRLoss(batch_size=args.batch_size)
 

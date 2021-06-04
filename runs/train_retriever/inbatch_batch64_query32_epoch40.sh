@@ -18,7 +18,7 @@ python train_retriever.py \
     --data-path gs://openqa-dpr/data/retriever/V3/N5000-INT \
     --max-context-length 256 \
     --max-query-length 32 \
-    --batch-size 16 \
+    --batch-size 64 \
     --epochs $run_epochs \
     --learning-rate 2e-5 \
     --warmup-steps 100 \
@@ -28,13 +28,10 @@ python train_retriever.py \
     --max-grad-norm 2.0 \
     --shuffle True \
     --seed 123 \
-    --checkpoint-path gs://openqa-dpr/checkpoints/retriever/hardnegvsnegsoftmax_batch16_query32 \
+    --checkpoint-path gs://openqa-dpr/checkpoints/retriever/inbatch_batch64_query32_epoch40 \
     --ctx-encoder-trainable True \
     --question-encoder-trainable True \
     --tpu $run_tpu \
     --pretrained-model bert-base-uncased \
-    --loss-fn hardnegvsnegsoftmax \
-    --use-pooler False \
-    --tokenizer bert-base-uncased \
-    --load-optimizer True \
-    --within-size 8
+    --loss-fn inbatch \
+    --use-pooler False

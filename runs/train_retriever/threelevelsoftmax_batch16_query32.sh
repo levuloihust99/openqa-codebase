@@ -28,13 +28,13 @@ python train_retriever.py \
     --max-grad-norm 2.0 \
     --shuffle True \
     --seed 123 \
-    --checkpoint-path gs://openqa-dpr/checkpoints/retriever/hardnegvsnegsoftmax_batch16_query32 \
+    --checkpoint-path gs://openqa-dpr/checkpoints/retriever/threelevelsoftmax_batch16_query32 \
     --ctx-encoder-trainable True \
     --question-encoder-trainable True \
     --tpu $run_tpu \
     --pretrained-model bert-base-uncased \
-    --loss-fn hardnegvsnegsoftmax \
+    --loss-fn threelevelsoftmax \
     --use-pooler False \
-    --tokenizer bert-base-uncased \
     --load-optimizer True \
+    --tokenizer bert-base-uncased \
     --within-size 8

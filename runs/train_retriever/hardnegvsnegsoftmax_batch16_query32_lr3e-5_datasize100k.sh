@@ -14,13 +14,13 @@ else
 fi
 
 python train_retriever.py \
-    --train-data-size 60000 \
+    --train-data-size 100000 \
     --data-path gs://openqa-dpr/data/retriever/V3/N5000-INT \
     --max-context-length 256 \
     --max-query-length 32 \
     --batch-size 16 \
     --epochs $run_epochs \
-    --learning-rate 2e-5 \
+    --learning-rate 3e-5 \
     --warmup-steps 100 \
     --adam-eps 1e-8 \
     --adam-betas "(0.9, 0.999)" \
@@ -28,7 +28,7 @@ python train_retriever.py \
     --max-grad-norm 2.0 \
     --shuffle True \
     --seed 123 \
-    --checkpoint-path gs://openqa-dpr/checkpoints/retriever/hardnegvsnegsoftmax_batch16_query32 \
+    --checkpoint-path gs://openqa-dpr/checkpoints/retriever/hardnegvsnegsoftmax_batch16_query32_lr3e-5_datasize100k \
     --ctx-encoder-trainable True \
     --question-encoder-trainable True \
     --tpu $run_tpu \
