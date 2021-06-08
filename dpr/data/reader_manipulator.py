@@ -10,7 +10,7 @@ import argparse
 logger = logging.getLogger()
 logger.setLevel(logging.DEBUG)
 
-def build_tfrecord_reader_data(
+def build_tfrecord_reader_train_data(
     dpr_reader_data_path: str,
     out_dir: str,
     records_per_file: int = 5000,
@@ -58,7 +58,7 @@ def build_tfrecord_reader_data(
                 list_end_positions.append(list(end_positions))
             
             answers = tf.sparse.from_dense(answers)
-            question: tf.constant(question)
+            question = tf.constant(question)
             positive_sequence_ids = tf.ragged.constant(positive_sequence_ids, dtype=tf.int32).to_sparse()
             positive_offsets = tf.sparse.from_dense(tf.convert_to_tensor(positive_offsets, dtype=tf.int32))
             list_start_positions  = tf.ragged.constant(list_start_positions, dtype=tf.int32).to_sparse()
@@ -164,7 +164,7 @@ def build_tfrecord_reader_data(
         idx += 1
 
 
-def load_tfrecord_reader_data(
+def load_tfrecord_reader_train_data(
     input_path: str,
 ):
     if not input_path.endswith("*"):
@@ -198,7 +198,7 @@ def load_tfrecord_reader_data(
     return tensor_dataset
 
 
-def transform_to_reader_dataset(
+def transform_to_reader_train_dataset(
     dataset: tf.data.Dataset,
     max_sequence_length: int = 256,
     max_answers: int = 10
@@ -275,6 +275,94 @@ def transform_to_reader_dataset(
     return dataset
 
 
+def build_tfrecord_reader_dev_dataset(
+    dpr_reader_data_path: str,
+    out_dir: str
+):
+    sys.path = ["/media/levuloi/Storage/thesis/DPR"] + sys.path
+    from dpr.data.reader_data import ReaderSample
+    sys.path.pop(0)
+
+    with open(dpr_reader_data_path, "rb") as reader:
+        dev_data = pickle.load(reader)
+
+    def _generate():
+        for sample in dev_data:
+            answers  = sample.answers
+            answers  = tf.sparse.from_dense(answers, dtype=tf.string)
+
+            question = sample.question
+            question = tf.constant(question, dtype=tf.string)
+
+            passages = sample.passages
+            passages_sequence_ids = [psg.sequence_ids for psg in passages]
+            passages_sequence_ids = tf.ragged.constant(passages_sequence_ids, dtype=tf.int32).to_sparse()
+            passages_offsets = [psg.passage_offset for psg in passages]
+            passages_offsets = tf.sparse.from_dense(tf.convert_to_tensor(passages_offsets, dtype=tf.int32))
+            
+            yield {
+                "answers": answers,
+                "question": question,
+                "passages/sequence_ids": passages_sequence_ids,
+                "passages/passage_offset": passages_offsets
+            }
+
+    tensor_dataset = tf.data.Dataset.from_generator(
+        _generate,
+        output_signature={
+            "answers": tf.SparseTensorSpec(shape=[None], dtype=tf.string),
+            "question": tf.TensorSpec(shape=[], dtype=tf.string),
+            "passages/sequence_ids": tf.SparseTensorSpec(shape=[None, None], dtype=tf.int32),
+            "passages/passage_offset": tf.SparseTensorSpec(shape=[None], dtype=tf.int32)
+        }
+    )
+
+    def _serialize(element):
+        answers = element['answers']
+        answers_serialized = tf.io.serialize_tensor(tf.io.serialize_sparse(answers))
+        answers_feature = tf.train.Feature(bytes_list=tf.train.BytesList(value=[answers_serialized.numpy()]))
+
+        question = element['question']
+        question_feature = tf.train.Feature(bytes_list=tf.train.BytesList(value=[question.numpy()]))
+
+        passages_sequence_ids = element['passages/sequence_ids']
+        passages_sequence_ids_serialized = tf.io.serialize_tensor(tf.io.serialize_sparse(passages_sequence_ids))
+        passages_sequence_ids_feature = tf.train.Feature(bytes_list=tf.train.BytesList(value=[passages_sequence_ids_serialized.numpy()]))
+
+        passages_offsets = element['passages/passage_offset']
+        passages_offsets_serialized = tf.io.serialize_tensor(tf.io.serialize_sparse(passages_offsets))
+        passages_offsets_feature = tf.train.Feature(bytes_list=tf.train.BytesList(value=[passages_offsets_serialized.numpy()]))
+
+        features = {
+            "answers": answers_feature,
+            "question": question_feature,
+            "passages/sequence_ids": passages_sequence_ids,
+            "passages/passage_offset": passages_offsets_feature
+        }
+
+        example = tf.train.Example(features=tf.train.Features(feature=features))
+        return example.SerializeToString()
+
+    def _generate_serialized():
+        count = 0
+        for element in tensor_dataset:
+            yield _serialize(element)
+            count += 1
+            print("Serialize {} samples".format(count))
+            print("---------------------------------------------------------------------------------------------------------------------------------------------")
+
+    dataset = tf.data.Dataset.from_generator(
+        _generate_serialized,
+        output_signature=tf.TensorSpec([], dtype=tf.string)
+    )
+
+    if not os.path.exists(out_dir):
+        os.makedirs(out_dir)
+    
+    writer = tf.data.experimental.TFRecordWriter(os.path.join(out_dir, "dev.tfrecord"))
+    writer.write(dataset)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--dpr-reader-data-path", type=str, default="/media/levuloi/Storage/thesis/DPR/downloads/data/reader/nq/single")
@@ -294,11 +382,11 @@ if __name__ == "__main__":
 
     # print("Generating tfrecord data for reader done")
 
-    dataset = load_tfrecord_reader_data(
+    dataset = load_tfrecord_reader_train_data(
         input_path=args.input_path,
     )
 
-    dataset = transform_to_reader_dataset(
+    dataset = transform_to_reader_train_dataset(
         dataset,
         max_sequence_length=args.max_sequence_length,
         max_answers=args.max_answers
