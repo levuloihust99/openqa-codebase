@@ -17,7 +17,7 @@ def main():
     parser = argparse.ArgumentParser()
 
     parser.add_argument("--train-data-size", type=int, default=263011)
-    parser.add_argument("--data-path", type=str, default="data/reader/nq/train")
+    parser.add_argument("--data-path", type=str, default="gs://openqa-dpr/data/reader/nq/train")
     parser.add_argument("--max-sequence-length", type=int, default=256)
     parser.add_argument("--max-answers", type=int, default=10)
     parser.add_argument("--batch-size", type=int, default=16)
@@ -34,6 +34,7 @@ def main():
     parser.add_argument("--tpu", type=str, default="tpu-v3")
     parser.add_argument("--pretrained-model", type=str, default="bert-base-uncased")
     parser.add_argument("--load-optimizer", type=eval, default=True)
+    parser.add_argument("--max-to-keep", type=int, default=50)
 
     args = parser.parse_args()
     args_dict = args.__dict__
@@ -68,17 +69,18 @@ def main():
     """
     Data pipeline
     """
-    dataset = reader_manipulator.load_tfrecord_reader_data(
+    dataset = reader_manipulator.load_tfrecord_reader_train_data(
         input_path=args.data_path
     )
 
-    dataset = reader_manipulator.transform_to_reader_dataset(
+    dataset = reader_manipulator.transform_to_reader_train_dataset(
         dataset=dataset,
         max_sequence_length=256,
         max_answers=10
     )
     dataset = dataset.cache()
     dataset = dataset.shuffle(buffer_size=70000)
+    dataset = dataset.repeat()
     dataset = dataset.batch(args.batch_size)
     dataset = dataset.prefetch(tf.data.AUTOTUNE)
 
@@ -147,7 +149,8 @@ def main():
             with tf.GradientTape() as tape:
                 start_logits, end_logits = reader(
                     input_ids=input_ids,
-                    attention_mask=attention_mask
+                    attention_mask=attention_mask,
+                    training=True
                 )
 
                 loss = loss_calculator.compute_token_loss(
@@ -184,7 +187,7 @@ def main():
         else:
             ckpt.optimizer = optimizer
 
-        ckpt_manager = tf.train.CheckpointManager(ckpt, checkpoint_path, max_to_keep=3)
+        ckpt_manager = tf.train.CheckpointManager(ckpt, checkpoint_path, max_to_keep=args.max_to_keep)
 
         # if a checkpoint exists, restore the latest checkpoint
         if ckpt_manager.latest_checkpoint:
