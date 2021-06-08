@@ -167,10 +167,10 @@ def build_tfrecord_reader_train_data(
 def load_tfrecord_reader_train_data(
     input_path: str,
 ):
-    if not input_path.endswith("*"):
-        input_path = os.path.join(input_path, "*")
-    list_files = glob.glob(input_path)
+    list_files = tf.io.gfile.listdir(input_path)
     list_files.sort()
+    list_files = [os.path.join(input_path, f) for f in list_files]
+
     file_dataset = tf.data.Dataset.from_tensor_slices(list_files)
     serialized_dataset = file_dataset.flat_map(
         lambda x: tf.data.TFRecordDataset(x)
@@ -223,7 +223,6 @@ def transform_to_reader_train_dataset(
 
         # parse start positions
         positive_start_positions_serialized = element['positive_passages/start_positions'][0]
-        print("positive start positions shape: {}".format(tf.shape(positive_start_positions_serialized)))
         positive_start_positions_sparse = tf.io.parse_tensor(positive_start_positions_serialized, out_type=tf.string)
         positive_start_positions_indices = tf.io.parse_tensor(positive_start_positions_sparse[0], out_type=tf.int64)
         positive_start_positions_values = tf.io.parse_tensor(positive_start_positions_sparse[1], out_type=tf.int32)
