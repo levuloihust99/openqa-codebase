@@ -47,3 +47,75 @@ class BiEncoder(keras.Model):
             ctx_pooled = ctx_sequence[:, 0, :]
 
         return q_pooled, ctx_pooled
+
+
+class Ranker(tf.keras.Model):
+    def __init__(
+        self,
+        encoder,
+        initializer_range: float,
+        use_pooler: bool = False,
+        **kwargs
+    ):
+        super(Ranker, self).__init__(**kwargs)
+        self.encoder = encoder
+        self.selector = tf.keras.layers.Dense(
+            units=1,
+            kernel_initializer=tf.keras.initializers.TruncatedNormal(stddev=initializer_range)
+        )
+        self.use_pooler = use_pooler
+
+    def call(
+        self,
+        input_ids,
+        attention_mask,
+        **kwargs
+    ):
+        outputs = self.encoder(
+            input_ids=input_ids,
+            attention_mask=attention_mask
+        )
+        
+        sequence_output, pooled_output = outputs[0], outputs[1]
+        if not self.use_pooler:
+            pooled_output = sequence_output[:, 0, :]
+
+        rank_logits = self.selector(pooled_output)
+        rank_logits = tf.squeeze(rank_logits, axis=1)
+        return rank_logits
+
+
+class Reader(tf.keras.Model):
+    def __init__(
+        self,
+        encoder,
+        initializer_range: float,
+        **kwargs
+    ):
+        super(Reader, self).__init__(**kwargs)
+        self.encoder = encoder
+        self.token_classifier = tf.keras.layers.Dense(
+            units=2,
+            kernel_initializer=tf.keras.initializers.TruncatedNormal(stddev=initializer_range)
+        )
+
+    def call(
+        self,
+        input_ids,
+        attention_mask,
+        **kwargs
+    ):
+        outputs = self.encoder(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            **kwargs
+        )
+
+        sequence_output, pooled_output = outputs[0], outputs[1]
+
+        logits = self.token_classifier(sequence_output)
+        start_logits, end_logits = tf.split(logits, num_or_size_splits=2, axis=-1)
+        start_logits = tf.squeeze(start_logits, axis=-1)
+        end_logits = tf.squeeze(end_logits, axis=-1)
+
+        return start_logits, end_logits

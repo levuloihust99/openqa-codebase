@@ -10,7 +10,7 @@ from datetime import datetime
 import copy
 
 from dpr import const, models, losses, optimizers
-from dpr.data import manipulator
+from dpr.data import biencoder_manipulator
 from utilities import write_config
 
 
@@ -80,12 +80,12 @@ def main():
     5. Batching dataset
     6. Prefetching dataset (to speed up training) 
     """
-    dataset = manipulator.load_retriever_tfrecord_int_data(
+    dataset = biencoder_manipulator.load_retriever_tfrecord_int_data(
         input_path=args.data_path,
         shuffle=args.shuffle,
         shuffle_seed=args.seed
     )
-    dataset = manipulator.pad(
+    dataset = biencoder_manipulator.pad(
         dataset, 
         sep_token_id=tokenizer.sep_token_id,
         max_context_length=args.max_context_length, 
@@ -170,17 +170,17 @@ def main():
 
         # Define loss function
         if args.loss_fn == 'threelevel':
-            loss_fn = losses.ThreeLevelDPRLoss(batch_size=args.batch_size, within_size=args.within_size)
+            loss_fn = losses.biencoder.ThreeLevelDPRLoss(batch_size=args.batch_size, within_size=args.within_size)
         elif args.loss_fn == 'twolevel':
-            loss_fn = losses.TwoLevelDPRLoss(batch_size=args.batch_size, within_size=args.within_size)
+            loss_fn = losses.biencoder.TwoLevelDPRLoss(batch_size=args.batch_size, within_size=args.within_size)
         elif args.loss_fn == "hardnegvsneg":
-            loss_fn = losses.HardNegVsNegDPRLoss(batch_size=args.batch_size, within_size=args.within_size)
+            loss_fn = losses.biencoder.HardNegVsNegDPRLoss(batch_size=args.batch_size, within_size=args.within_size)
         elif args.loss_fn == 'hardnegvsnegsoftmax':
-            loss_fn = losses.HardNegVsNegSoftMaxDPRLoss(batch_size=args.batch_size, within_size=args.within_size)
+            loss_fn = losses.biencoder.HardNegVsNegSoftMaxDPRLoss(batch_size=args.batch_size, within_size=args.within_size)
         elif args.loss_fn == 'threelevelsoftmax':
-            loss_fn = losses.ThreeLevelSoftMaxDPRLoss(batch_size=args.batch_size, within_size=args.within_size)
+            loss_fn = losses.biencoder.ThreeLevelSoftMaxDPRLoss(batch_size=args.batch_size, within_size=args.within_size)
         else:
-            loss_fn = losses.InBatchDPRLoss(batch_size=args.batch_size)
+            loss_fn = losses.biencoder.InBatchDPRLoss(batch_size=args.batch_size)
 
 
     """
