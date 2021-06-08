@@ -95,8 +95,9 @@ def build_tfrecord_reader_data(
     )
 
     def _serialize(element):
-        answers = element['answers'].values
-        answers_feature = tf.train.Feature(bytes_list=tf.train.BytesList(value=answers.numpy()))
+        answers = element['answers']
+        serialized_answers = tf.io.serialize_tensor(tf.io.serialize_sparse(answers))
+        answers_feature = tf.train.Feature(bytes_list=tf.train.BytesList(value=[serialized_answers.numpy()]))
 
         question = element['question']
         question_feature = tf.train.Feature(bytes_list=tf.train.BytesList(value=[question.numpy()]))
@@ -303,7 +304,13 @@ if __name__ == "__main__":
         max_answers=args.max_answers
     )
 
+    count = 0
     iterator = iter(dataset)
-    element = next(iterator)
+    for element in dataset:
+        count += 1
+        print("Count {}".format(count))
+
+    print("********************************************************")
+    print("Train data size: {}".format(count))
 
     print("done")
