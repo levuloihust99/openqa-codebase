@@ -203,7 +203,7 @@ def transform_to_reader_train_dataset(
     max_sequence_length: int = 256,
     max_answers: int = 10
 ):
-    def _pad(element):
+    def _process(element):
         # parse positive sequence ids
         positive_sequence_ids_serialized = element['positive_passages/sequence_ids'][0]
         positive_sequence_ids_sparse = tf.io.parse_tensor(positive_sequence_ids_serialized, out_type=tf.string)
@@ -262,7 +262,7 @@ def transform_to_reader_train_dataset(
         }
 
     dataset = dataset.map(
-        _pad,
+        _process,
         num_parallel_calls=tf.data.AUTOTUNE,
         deterministic=True
     )
@@ -274,7 +274,72 @@ def transform_to_reader_train_dataset(
     return dataset
 
 
-def build_tfrecord_reader_dev_dataset(
+def transform_to_ranker_train_dataset(
+    dataset: tf.data.Dataset,
+    max_sequence_length: int = 256,
+    num_passages: int = 24
+):
+    def _process(element):
+        # parse positive sequence ids
+        positive_sequence_ids_serialized = element['positive_passages/sequence_ids'][0]
+        positive_sequence_ids_sparse = tf.io.parse_tensor(positive_sequence_ids_serialized, out_type=tf.string)
+        positive_sequence_ids_indices = tf.io.parse_tensor(positive_sequence_ids_sparse[0], out_type=tf.int64)
+        positive_sequence_ids_values = tf.io.parse_tensor(positive_sequence_ids_sparse[1], out_type=tf.int32)
+        positive_sequence_ids_dense_shape = tf.io.parse_tensor(positive_sequence_ids_sparse[2], out_type=tf.int64)
+        positive_sequence_ids = tf.sparse.SparseTensor(
+            indices=positive_sequence_ids_indices,
+            values=positive_sequence_ids_values,
+            dense_shape=positive_sequence_ids_dense_shape
+        )
+        positive_sequence_ids = tf.sparse.to_dense(positive_sequence_ids)
+        positive_sequence_ids = positive_sequence_ids[:, :max_sequence_length]
+        positive_sequence_ids = tf.pad(positive_sequence_ids, [[0, 0], [0, max_sequence_length - tf.shape(positive_sequence_ids)[1]]])
+
+        # parse negative sequence ids
+        negative_sequence_ids_serialized = element['negative_passages/sequence_ids'][0]
+        negative_sequence_ids_sparse = tf.io.parse_tensor(negative_sequence_ids_serialized, out_type=tf.string)
+        negative_sequence_ids_indices = tf.io.parse_tensor(negative_sequence_ids_sparse[0], out_type=tf.int64)
+        negative_sequence_ids_values = tf.io.parse_tensor(negative_sequence_ids_sparse[1], out_type=tf.int32)
+        negative_sequence_ids_dense_shape = tf.io.parse_tensor(negative_sequence_ids_sparse[2], out_type=tf.int64)
+        negative_sequence_ids = tf.sparse.SparseTensor(
+            indices=negative_sequence_ids_indices,
+            values=negative_sequence_ids_values,
+            dense_shape=negative_sequence_ids_dense_shape
+        )
+        negative_sequence_ids = tf.sparse.to_dense(negative_sequence_ids)
+        negative_sequence_ids = negative_sequence_ids[:, :max_sequence_length]
+        negative_sequence_ids = tf.pad(negative_sequence_ids, [[0, 0], [0, max_sequence_length - tf.shape(negative_sequence_ids)[1]]])
+
+        # random choose a positive passage
+        positive_idx = tf.random.uniform([], maxval=tf.shape(positive_sequence_ids)[0], dtype=tf.int32)
+        selected_positive_sequence_ids = positive_sequence_ids[positive_idx : positive_idx + 1]
+
+        # random choose num_passages - 1 negative passages
+        negative_idxs = tf.random.shuffle(tf.range(tf.shape(negative_sequence_ids)[0], dtype=tf.int32))[:num_passages - 1]
+        negative_idxs = tf.expand_dims(negative_idxs, axis=1)
+        selected_negative_sequence_ids = tf.gather_nd(negative_sequence_ids, indices=negative_idxs)
+        
+        # concat positive and negative
+        sequence_ids = tf.concat(
+            [
+                selected_positive_sequence_ids,
+                selected_negative_sequence_ids
+            ],
+            axis=0
+        )
+
+        return {
+            'input_ids': sequence_ids,
+        }
+
+    dataset = dataset.map(
+        _process,
+        num_parallel_calls=tf.data.AUTOTUNE
+    )
+    return dataset
+
+
+def build_tfrecord_reader_dev_data(
     dpr_reader_data_path: str,
     out_dir: str
 ):
@@ -288,7 +353,7 @@ def build_tfrecord_reader_dev_dataset(
     def _generate():
         for sample in dev_data:
             answers  = sample.answers
-            answers  = tf.sparse.from_dense(answers, dtype=tf.string)
+            answers  = tf.sparse.from_dense(answers)
 
             question = sample.question
             question = tf.constant(question, dtype=tf.string)
@@ -298,12 +363,16 @@ def build_tfrecord_reader_dev_dataset(
             passages_sequence_ids = tf.ragged.constant(passages_sequence_ids, dtype=tf.int32).to_sparse()
             passages_offsets = [psg.passage_offset for psg in passages]
             passages_offsets = tf.sparse.from_dense(tf.convert_to_tensor(passages_offsets, dtype=tf.int32))
-            
+
+            has_answer = [psg.has_answer for psg in passages]
+            has_answer = tf.sparse.from_dense(tf.convert_to_tensor(has_answer, dtype=tf.int32))
+
             yield {
                 "answers": answers,
                 "question": question,
                 "passages/sequence_ids": passages_sequence_ids,
-                "passages/passage_offset": passages_offsets
+                "passages/passage_offset": passages_offsets,
+                "has_answer": has_answer
             }
 
     tensor_dataset = tf.data.Dataset.from_generator(
@@ -312,7 +381,8 @@ def build_tfrecord_reader_dev_dataset(
             "answers": tf.SparseTensorSpec(shape=[None], dtype=tf.string),
             "question": tf.TensorSpec(shape=[], dtype=tf.string),
             "passages/sequence_ids": tf.SparseTensorSpec(shape=[None, None], dtype=tf.int32),
-            "passages/passage_offset": tf.SparseTensorSpec(shape=[None], dtype=tf.int32)
+            "passages/passage_offset": tf.SparseTensorSpec(shape=[None], dtype=tf.int32),
+            "has_answer": tf.SparseTensorSpec([None], dtype=tf.int32)
         }
     )
 
@@ -332,11 +402,16 @@ def build_tfrecord_reader_dev_dataset(
         passages_offsets_serialized = tf.io.serialize_tensor(tf.io.serialize_sparse(passages_offsets))
         passages_offsets_feature = tf.train.Feature(bytes_list=tf.train.BytesList(value=[passages_offsets_serialized.numpy()]))
 
+        has_answer = element['has_answer']
+        has_answer_serialized = tf.io.serialize_tensor(tf.io.serialize_sparse(has_answer))
+        has_answer_feature = tf.train.Feature(bytes_list=tf.train.BytesList(value=[has_answer_serialized.numpy()]))
+
         features = {
             "answers": answers_feature,
             "question": question_feature,
-            "passages/sequence_ids": passages_sequence_ids,
-            "passages/passage_offset": passages_offsets_feature
+            "passages/sequence_ids": passages_sequence_ids_feature,
+            "passages/passage_offset": passages_offsets_feature,
+            "has_answer": has_answer_feature
         }
 
         example = tf.train.Example(features=tf.train.Features(feature=features))
@@ -362,6 +437,151 @@ def build_tfrecord_reader_dev_dataset(
     writer.write(dataset)
 
 
+def load_tfrecord_reader_dev_data(
+    input_path: str
+):
+    serialized_dataset = tf.data.TFRecordDataset(input_path)
+
+    feature_description = {
+        "answers": tf.io.FixedLenFeature([1], dtype=tf.string),
+        "question": tf.io.FixedLenFeature([1], dtype=tf.string),
+        "passages/sequence_ids": tf.io.FixedLenFeature([1], dtype=tf.string),
+        "passages/passage_offset": tf.io.FixedLenFeature([1], dtype=tf.string),
+        "has_answer": tf.io.FixedLenFeature([1], dtype=tf.string)
+    }
+    def _parse(example_proto):
+        return tf.io.parse_single_example(example_proto, feature_description)
+    
+    tensor_dataset = serialized_dataset.map(
+        _parse,
+        num_parallel_calls=tf.data.AUTOTUNE,
+        deterministic=True
+    )
+
+    def _restore(element):
+        answers_serialized = element['answers'][0]
+        answers_sparse = tf.io.parse_tensor(answers_serialized, out_type=tf.string)
+        answers = tf.io.parse_tensor(answers_sparse[1], out_type=tf.string)
+
+        question = element['question']
+
+        sequence_ids_serialized = element['passages/sequence_ids'][0]
+        sequence_ids_sparse = tf.io.parse_tensor(sequence_ids_serialized, out_type=tf.string)
+        sequence_ids_indices = tf.io.parse_tensor(sequence_ids_sparse[0], out_type=tf.int64)
+        sequence_ids_values = tf.io.parse_tensor(sequence_ids_sparse[1], out_type=tf.int32)
+        sequence_ids_dense_shape = tf.io.parse_tensor(sequence_ids_sparse[2], out_type=tf.int64)
+        sequence_ids = tf.sparse.SparseTensor(
+            indices=sequence_ids_indices,
+            values=sequence_ids_values,
+            dense_shape=sequence_ids_dense_shape
+        )
+
+        passage_offset_serialized = element['passages/passage_offset'][0]
+        passage_offset_sparse = tf.io.parse_tensor(passage_offset_serialized, out_type=tf.string)
+        passage_offset = tf.io.parse_tensor(passage_offset_sparse[1], out_type=tf.int32)
+
+        has_answer_serialized = element['has_answer'][0]
+        has_answer_sparse = tf.io.parse_tensor(has_answer_serialized, out_type=tf.string)
+        has_answer_indices = tf.io.parse_tensor(has_answer_sparse[0], out_type=tf.int64)
+        has_answer_values = tf.io.parse_tensor(has_answer_sparse[1], out_type=tf.int32)
+        has_answer_dense_shape = tf.io.parse_tensor(has_answer_sparse[2], out_type=tf.int64)
+        has_answer = tf.sparse.SparseTensor(
+            indices=has_answer_indices,
+            values=has_answer_values,
+            dense_shape=has_answer_dense_shape
+        )
+        has_answer = tf.sparse.to_dense(has_answer)        
+
+        return {
+            "answers": answers,
+            "question": question,
+            "passages/sequence_ids": sequence_ids,
+            "passages/passage_offset": passage_offset,
+            "has_answer": has_answer
+        }
+
+    dataset = tensor_dataset.map(
+        _restore,
+        num_parallel_calls=tf.data.AUTOTUNE,
+        deterministic=True
+    )
+    
+    return dataset
+
+
+def transform_to_reader_validate_dataset(
+    dataset: tf.data.Dataset,
+    max_sequence_length: int = 256
+):
+    def _flat_map(element):
+        answers = element['answers']
+        question = element['question']
+        sequence_ids = element['passages/sequence_ids']
+        passage_offset = element['passages/passage_offset']
+        has_answer = element['has_answer']
+
+        sequence_ids = tf.sparse.to_dense(sequence_ids)
+        filtered_idxs = tf.where(has_answer)
+        filtered_sequence_ids = tf.gather_nd(sequence_ids, filtered_idxs)
+        filtered_sequence_ids = filtered_sequence_ids[:, :max_sequence_length]
+        filtered_sequence_ids = tf.pad(filtered_sequence_ids, [[0, 0], [0, max_sequence_length - tf.shape(filtered_sequence_ids)[1]]])
+        filtered_passage_offset = tf.gather_nd(passage_offset, filtered_idxs)
+
+        answers = tf.expand_dims(answers, axis=0)
+        answers = tf.tile(answers, multiples=[tf.shape(filtered_passage_offset)[0], 1])
+        question = tf.tile(question, multiples=[tf.shape(filtered_passage_offset)[0]])
+
+        tensors = {
+            "answers": answers,
+            "question": question,
+            "input_ids": filtered_sequence_ids,
+            "passage_offset": filtered_passage_offset, 
+        }
+
+        return tf.data.Dataset.from_tensor_slices(tensors)
+
+    dataset = dataset.flat_map(
+        _flat_map
+    )
+
+    return dataset
+
+
+def transform_to_endtoend_validate_dataset(
+    dataset: tf.data.Dataset,
+    max_sequence_length: int = 256,
+    max_passages: int = 50
+):
+    def _map(element):
+        answers = element['answers']
+        question = element['question']
+        sequence_ids = element['passages/sequence_ids']
+        passage_offset = element['passages/passage_offset']
+
+        sequence_ids = tf.sparse.to_dense(sequence_ids)
+        sequence_ids = sequence_ids[:max_passages]
+        sequence_ids = sequence_ids[:, :max_sequence_length]
+        sequence_ids = tf.pad(sequence_ids, [[0, 0], [0, max_sequence_length - tf.shape(sequence_ids)[1]]])
+        passage_offset = passage_offset[:max_passages]
+        
+        answers = tf.io.serialize_tensor(answers)
+
+        return {
+            "answers": answers,
+            "question": question,
+            "passages/sequence_ids": sequence_ids,
+            "passages/passage_offset": passage_offset,
+        }
+
+    dataset = dataset.map(
+        _map,
+        num_parallel_calls=tf.data.AUTOTUNE,
+        deterministic=True
+    )
+
+    return dataset
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--dpr-reader-data-path", type=str, default="/media/levuloi/Storage/thesis/DPR/downloads/data/reader/nq/single")
@@ -373,6 +593,9 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
+    """
+    Test build train data for reader
+    """
     # build_tfrecord_reader_data(
     #     dpr_reader_data_path=args.dpr_reader_data_path,
     #     out_dir=args.out_dir,
@@ -381,23 +604,57 @@ if __name__ == "__main__":
 
     # print("Generating tfrecord data for reader done")
 
-    dataset = load_tfrecord_reader_train_data(
-        input_path=args.input_path,
-    )
+    """
+    Test load train data for reader
+    """
+    # dataset = load_tfrecord_reader_train_data(
+    #     input_path=args.input_path,
+    # )
 
-    dataset = transform_to_reader_train_dataset(
-        dataset,
-        max_sequence_length=args.max_sequence_length,
-        max_answers=args.max_answers
-    )
+    # dataset = transform_to_reader_train_dataset(
+    #     dataset,
+    #     max_sequence_length=args.max_sequence_length,
+    #     max_answers=args.max_answers
+    # )
 
-    count = 0
-    iterator = iter(dataset)
-    for element in dataset:
-        count += 1
-        print("Count {}".format(count))
+    # count = 0
+    # iterator = iter(dataset)
+    # for element in dataset:
+    #     count += 1
+    #     print("Count {}".format(count))
 
-    print("********************************************************")
-    print("Train data size: {}".format(count))
+    # print("********************************************************")
+    # print("Train data size: {}".format(count))
+
+    """
+    Test build dev data for reader
+    """
+    # build_tfrecord_reader_dev_data(
+    #     dpr_reader_data_path="/media/levuloi/Storage/thesis/DPR/downloads/data/reader/nq/single/dev.pkl",
+    #     out_dir="data/reader/nq/dev"
+    # )
+
+    """
+    Test load dev data
+    """
+    # dataset = load_tfrecord_reader_dev_data(input_path="data/reader/nq/dev/dev.tfrecord")
+
+    """
+    Test transform to reader validate dataset
+    """
+    # dataset = load_tfrecord_reader_dev_data(input_path="data/reader/nq/dev/dev.tfrecord")
+    # dataset = transform_to_reader_validate_dataset(dataset=dataset, max_sequence_length=256)
+
+    """
+    Test transform to end-to-end validate dataset
+    """
+    # dataset = load_tfrecord_reader_dev_data(input_path="data/reader/nq/dev/dev.tfrecord")
+    # dataset = transform_to_endtoend_validate_dataset(dataset=dataset, max_sequence_length=256, max_passages=50)
+
+    """
+    Test transform to ranker dataset
+    """
+    # dataset = load_tfrecord_reader_train_data(input_path="data/reader/nq/train")
+    # dataset = transform_to_ranker_train_dataset(dataset=dataset, max_sequence_length=256, num_passages=24)
 
     print("done")
