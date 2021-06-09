@@ -21,8 +21,8 @@ import json
 
 from dpr.indexer import DenseFlatIndexer
 from dpr import const
-from dpr.qa_validation import calculate_matches
-from dpr.data import manipulator
+from dpr.utils.qa_validation import calculate_matches
+from dpr.data import biencoder_manipulator
 from utilities import write_config, spread_samples_greedy, spread_samples_equally
 
 
@@ -149,7 +149,7 @@ def prepare_dataset(qas_tfrecord_path, strategy, tokenizer, max_query_length: in
     print("Preparing dataset for inference... ", end="")
     sys.stdout.flush()
 
-    dataset = manipulator.load_tfrecord_tokenized_data_for_qas_ver2(
+    dataset = biencoder_manipulator.load_tfrecord_tokenized_data_for_qas_ver2(
         qas_tfrecord_path=qas_tfrecord_path,
         sep_token_id=tokenizer.sep_token_id,
         max_query_length=max_query_length

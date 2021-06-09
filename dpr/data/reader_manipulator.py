@@ -471,8 +471,6 @@ def load_tfrecord_reader_dev_data(
 
     def _restore(element):
         answers_serialized = element['answers'][0]
-        answers_sparse = tf.io.parse_tensor(answers_serialized, out_type=tf.string)
-        answers = tf.io.parse_tensor(answers_sparse[1], out_type=tf.string)
 
         question = element['question']
 
@@ -504,7 +502,7 @@ def load_tfrecord_reader_dev_data(
         has_answer = tf.sparse.to_dense(has_answer)        
 
         return {
-            "answers": answers,
+            "answers": answers_serialized,
             "question": question,
             "passages/sequence_ids": sequence_ids,
             "passages/passage_offset": passage_offset,
@@ -653,8 +651,11 @@ if __name__ == "__main__":
     """
     Test transform to reader validate dataset
     """
-    # dataset = load_tfrecord_reader_dev_data(input_path="data/reader/nq/dev/dev.tfrecord")
-    # dataset = transform_to_reader_validate_dataset(dataset=dataset, max_sequence_length=256)
+    dataset = load_tfrecord_reader_dev_data(input_path="data/reader/nq/dev/dev.tfrecord")
+    dataset = transform_to_reader_validate_dataset(dataset=dataset, max_sequence_length=256)
+    dataset = dataset.batch(16)
+    for element in dataset:
+        pass
 
     """
     Test transform to end-to-end validate dataset

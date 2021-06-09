@@ -9,7 +9,7 @@ import tensorflow as tf
 from transformers import BertConfig, TFBertModel
 
 from dpr import const
-from dpr.data import manipulator
+from dpr.data import biencoder_manipulator
 from utilities import write_config, spread_samples_equally, spread_samples_greedy
 
 
@@ -236,7 +236,7 @@ def main():
     Data pipeline
     """
     print("Data pipeline processing...")
-    dataset = manipulator.load_tfrecord_tokenized_data_for_ctx_sources(
+    dataset = biencoder_manipulator.load_tfrecord_tokenized_data_for_ctx_sources(
         input_path=args.ctx_source_shards_tfrecord,
         max_context_length=args.max_context_length
     )

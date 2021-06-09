@@ -93,7 +93,7 @@ def _normalize(text):
     return unicodedata.normalize("NFD", text)
 
 
-def _normalize_answer(s):
+def normalize_answer(s):
     def remove_articles(text):
         return re.sub(r"\b(a|an|the)\b", " ", text)
 

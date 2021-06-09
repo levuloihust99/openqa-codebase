@@ -6,3 +6,7 @@
 /checkpoints/
 __pycache__/
 /configs/
+/.gitignore
+/debug.py
+/test_losses.py
+/test_TFBertModel.py
