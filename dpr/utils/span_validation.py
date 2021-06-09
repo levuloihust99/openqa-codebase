@@ -6,13 +6,13 @@ def get_best_span(
     start_logits,
     end_logits,
     sequence_ids,
-    max_answers,
+    max_answer_length,
     tokenizer
 ):
     scores = []
-    for (i, s) in enumerate(start_logits):
-        for (j, e) in enumerate(end_logits[i : i + max_answers]):
-            scores.append((i, i + j), s + e)
+    for i, s in enumerate(start_logits):
+        for j, e in enumerate(end_logits[i : i + max_answer_length]):
+            scores.append(((i, i + j), s + e))
 
     scores = sorted(scores, key=lambda x: x[1], reverse=True)
     (start_index, end_index), _ = scores[0]
@@ -39,11 +39,11 @@ def extend_span_to_full_words(
     tokenizer,
     sequence_ids: List[int],
     span: Tuple[int, int],
-    passage_offset: int
 ) -> Tuple[int, int]:
+
     start_index, end_index = span
     max_len = len(sequence_ids)
-    while start_index > passage_offset and is_sub_word_id(tokenizer, sequence_ids[start_index]):
+    while start_index > 0 and is_sub_word_id(tokenizer, sequence_ids[start_index]):
         start_index -= 1
 
     while end_index < max_len - 1 and is_sub_word_id(tokenizer, sequence_ids[end_index + 1]):

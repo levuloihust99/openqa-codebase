@@ -537,7 +537,7 @@ def transform_to_reader_validate_dataset(
         filtered_passage_offset = tf.gather_nd(passage_offset, filtered_idxs)
 
         answers = tf.expand_dims(answers, axis=0)
-        answers = tf.tile(answers, multiples=[tf.shape(filtered_passage_offset)[0], 1])
+        answers = tf.tile(answers, multiples=[tf.shape(filtered_passage_offset)[0]])
         question = tf.tile(question, multiples=[tf.shape(filtered_passage_offset)[0]])
 
         tensors = {

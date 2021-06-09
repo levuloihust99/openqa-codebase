@@ -6,12 +6,15 @@ import time
 from multiprocessing import Pool as ProcessPool
 from functools import partial
 from tqdm import tqdm
+import json
 
 import tensorflow as tf
 from transformers import TFBertModel, BertConfig, BertTokenizer
+import numpy as np
 
 from dpr.utils.span_validation import get_best_span, compare_spans
 from dpr import models
+from utilities import write_config
 
 
 def validate(
@@ -48,7 +51,7 @@ def validate(
 
     processes = ProcessPool(processes=os.cpu_count())
     tokenizer = BertTokenizer.from_pretrained("bert-base-uncased")
-    get_best_span_partial = partial(get_best_span, max_answers=args.max_answers, tokenizer=tokenizer)
+    get_best_span_partial = partial(get_best_span, max_answer_length=args.max_answer_length, tokenizer=tokenizer)
         
     iterator = iter(dataset)
     em_hits = []
@@ -56,15 +59,17 @@ def validate(
     for element in tqdm(iterator):
         answers_serialized = element['answers']
         question = element['question']
-        passage_offset = element['passages/passage_offset']
+        passage_offset = element['passage_offset']
         input_ids = element['input_ids']
 
         start_logits, end_logits = dist_forward_step(input_ids)
         if strategy.num_replicas_in_sync > 1:
             start_logits = tf.concat(start_logits.values, axis=0)
             end_logits = tf.concat(end_logits.values, axis=0)
-            input_ids = tf.concat(input_ids, axis=0)
-            passage_offset = tf.concat(passage_offset, axis=0)
+            input_ids = tf.concat(input_ids.values, axis=0)
+            passage_offset = tf.concat(passage_offset.values, axis=0)
+            answers_serialized = tf.concat(answers_serialized.values, axis=0)
+            question = tf.concat(question.values, axis=0)
 
         sentence_ids = tf.RaggedTensor.from_tensor(input_ids, padding=tokenizer.pad_token_id)
         sentence_ids = sentence_ids.to_list()
@@ -84,7 +89,7 @@ def validate(
             ans_values = [answer.numpy().decode() for answer in ans_values]
             answers.append(ans_values)
 
-        hits = processes.startmap(compare_spans, zip(answers, best_spans))
+        hits = processes.starmap(compare_spans, zip(answers, best_spans))
         passages = [tokenizer.decode(ids) for ids in ctx_ids]
 
         stats = [
@@ -115,6 +120,7 @@ def load_dataset(data_path: str, strategy):
         dataset=dataset,
         max_sequence_length=args.max_sequence_length
     )
+    dataset = dataset.skip(263000)
     dataset = dataset.batch(args.batch_size)
     dataset = dataset.prefetch(tf.data.AUTOTUNE)
 
@@ -158,11 +164,26 @@ def load_checkpoint(
         ckpt = tf.train.Checkpoint(model=reader)
         ckpt.restore(tf.train.latest_checkpoint(checkpoint_path)).expect_partial()
 
-        print("Checkpoint file: {}".format(tf.train.latest_checkpoint(checkpoint_path)))
-        print("done")
-        print("-----------------------------------------------------------")
+    print("Checkpoint file: {}".format(tf.train.latest_checkpoint(checkpoint_path)))
+    print("done")
+    print("-----------------------------------------------------------")
 
     return reader
+
+
+def save_results(em_hits, match_stats, out_dir):
+    print("Saving results...")
+    if not os.path.exists(out_dir):
+        os.makedirs(out_dir)
+    
+    em_score = np.mean(em_hits)
+    with open(os.path.join(out_dir, "em_score.txt"), "w") as writer:
+        writer.write(str(em_score))
+    with open(os.path.join(out_dir, "match_stats.json"), "w") as writer:
+        json.dump(match_stats, writer, indent=4)
+
+    print("done")
+    print("-----------------------------------------------------------")
 
 
 def main():
@@ -174,9 +195,24 @@ def main():
     parser.add_argument("--pretrained-model", type=str, default="bert-base-uncased")
     parser.add_argument("--batch-size", type=int, default=128)
     parser.add_argument("--checkpoint-path", type=str, default="gs://openqa-dpr/checkpoints/reader/baseline")
+    parser.add_argument("--disable-tf-function", type=eval, default=False)
+    parser.add_argument("--max-answer-length", type=int, default=10)
+    parser.add_argument("--res-dir", type=str, default="results/reader/baseline")
 
     global args
-    args = parser.parse_args()
+    args = parser.parse_args([])
+    args_dict = args.__dict__
+    checkpoint_type = os.path.basename(args.checkpoint_path)
+    args_dict['res_dir'] = os.path.join(args_dict['res_dir'], checkpoint_type)
+
+    configs = ["{}: {}".format(k, v) for k, v in args_dict.items()]
+    configs_string = "\t" + "\n\t".join(configs) + "\n"
+    print("************************* Configurations *************************")
+    print(configs_string)
+    print("----------------------------------------------------------------------------------------------------------------------")
+
+    config_path = "configs/{}/{}/config.yml".format(os.path.basename(__file__).rstrip(".py"), datetime.now().strftime("%Y-%m-%d %H-%M-%S"))
+    write_config(config_path, args_dict)
 
     try: # detect TPUs
         resolver = tf.distribute.cluster_resolver.TPUClusterResolver(tpu=args.tpu) # TPU detection
@@ -192,13 +228,19 @@ def main():
             strategy = tf.distribute.get_strategy()
 
     dataset = load_dataset(data_path=args.data_path, strategy=strategy)
-    reader = load_checkpoint(pretrained_model=args.pretrained_model)
+    reader = load_checkpoint(
+        pretrained_model=args.pretrained_model,
+        checkpoint_path=args.checkpoint_path,
+        strategy=strategy
+    )
 
-    validate(
+    em_hits, match_stats = validate(
         reader=reader,
         strategy=strategy,
         dataset=dataset
     )
+
+    save_results(em_hits=em_hits, match_stats=match_stats, out_dir=args.res_dir)
 
 
 if __name__ == "__main__":
