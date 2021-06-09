@@ -14,7 +14,7 @@ import numpy as np
 
 from dpr.utils.span_validation import get_best_span, compare_spans
 from dpr import models
-from utilities import write_config
+from utilities import write_config, spread_samples_equally
 
 
 def validate(
@@ -49,6 +49,10 @@ def validate(
     if not args.disable_tf_function:
         dist_forward_step = tf.function(dist_forward_step)
 
+    def value_fn_template(ctx, indices, tensors):
+        start, end = indices[ctx.replica_id_in_sync_group]
+        return tensors[start : end]
+
     processes = ProcessPool(processes=os.cpu_count())
     tokenizer = BertTokenizer.from_pretrained("bert-base-uncased")
     get_best_span_partial = partial(get_best_span, max_answer_length=args.max_answer_length, tokenizer=tokenizer)
@@ -62,22 +66,102 @@ def validate(
         passage_offset = element['passage_offset']
         input_ids = element['input_ids']
 
-        start_logits, end_logits = dist_forward_step(input_ids)
         if strategy.num_replicas_in_sync > 1:
-            start_logits = tf.concat(start_logits.values, axis=0)
-            end_logits = tf.concat(end_logits.values, axis=0)
+            reduced_input_ids = tf.concat(input_ids.values, axis=0)
+        else:
+            reduced_input_ids = input_ids
+        
+        global_batch_size = reduced_input_ids.shape[0]
+        
+        # forward pass
+        if global_batch_size < args.batch_size * strategy.num_replicas_in_sync:
+            base_replica_batch_size = args.batch_size
+            flag = False
+        
+            while True:
+                spread, global_batch_size, base_replica_batch_size = spread_samples_equally(
+                    global_batch_size=global_batch_size,
+                    num_replicas=strategy.num_replicas_in_sync,
+                    base_replica_batch_size=base_replica_batch_size,
+                    init_batch_size=args.batch_size
+                )
+
+                if len(spread) > 1:
+                    indices = []
+                    idx = 0
+                    for num in spread:
+                        indices.append((idx, idx + num))
+                        idx += num
+                    
+                    value_fn = partial(value_fn_template, indices=indices, tensors=reduced_input_ids)
+                    reduced_input_ids = reduced_input_ids[base_replica_batch_size * strategy.num_replicas_in_sync:]
+                    dist_input_ids = strategy.experimental_distribute_values_from_function(value_fn)
+                    start_logits, end_logits = dist_forward_step(dist_input_ids)
+                    
+                    if not flag:
+                        if strategy.num_replicas_in_sync > 1:
+                            global_start_logits = tf.concat(start_logits.values, axis=0)
+                            global_end_logits = tf.concat(end_logits.values, axis=0)
+                        else:
+                            global_start_logits = start_logits
+                            global_end_logits = end_logits
+                        flag = True
+
+                    else:
+                        if strategy.num_replicas_in_sync > 1:
+                            global_start_logits = tf.concat([global_start_logits, *start_logits.values], axis=0)
+                            global_end_logits = tf.concat([global_end_logits, *start_logits.values], axis=0)
+                        else:
+                            global_start_logits = tf.concat([global_start_logits, start_logits], axis=0)
+                            global_end_logits = tf.concat([global_end_logits, end_logits], axis=0)
+
+                    if global_batch_size == 0:
+                        break
+
+                else:
+                    start_logits, end_logits = dist_forward_step(reduced_input_ids)
+                    if not flag:
+                        if strategy.num_replicas_in_sync > 1:
+                            global_start_logits = start_logits.values[0]
+                            global_end_logits = end_logits.values[0]
+                        else:
+                            global_start_logits = start_logits
+                            global_end_logits = end_logits
+                        flag = True
+                    else:
+                        if strategy.num_replicas_in_sync > 1:
+                            global_start_logits = tf.concat([global_start_logits, start_logits.values[0]], axis=0)
+                            global_end_logits = tf.concat([global_end_logits, end_logits.values[0]], axis=0)
+                        else:
+                            global_start_logits = tf.concat([global_start_logits, start_logits], axis=0)
+                            global_end_logits = tf.concat([global_end_logits, end_logits], axis=0)
+                    break
+ 
+        else:
+            start_logits, end_logits = dist_forward_step(input_ids)
+            if strategy.num_replicas_in_sync > 1:
+                global_start_logits = tf.concat(start_logits.values, axis=0)
+                global_end_logits = tf.concat(end_logits.values, axis=0)
+            else:
+                global_start_logits = start_logits
+                global_end_logits = end_logits
+        
+        if strategy.num_replicas_in_sync > 1:
             input_ids = tf.concat(input_ids.values, axis=0)
             passage_offset = tf.concat(passage_offset.values, axis=0)
             answers_serialized = tf.concat(answers_serialized.values, axis=0)
             question = tf.concat(question.values, axis=0)
-
+        
+        question = question.numpy().tolist()
+        question = [q.decode() for q in question]
+        
         sentence_ids = tf.RaggedTensor.from_tensor(input_ids, padding=tokenizer.pad_token_id)
         sentence_ids = sentence_ids.to_list()
         ctx_ids = [ids[offset:] for ids, offset in zip(sentence_ids, passage_offset)]
 
-        start_logits = start_logits.numpy().tolist()
+        start_logits = global_start_logits.numpy().tolist()
         start_logits = [logits[offset : offset + len(ctx)] for logits, offset, ctx in zip(start_logits, passage_offset, ctx_ids)]
-        end_logits = end_logits.numpy().tolist()
+        end_logits = global_end_logits.numpy().tolist()
         end_logits = [logits[offset : offset + len(ctx)] for logits, offset, ctx in zip(end_logits, passage_offset, ctx_ids)]
         
         best_spans = processes.starmap(get_best_span_partial, zip(start_logits, end_logits, ctx_ids))
@@ -120,7 +204,6 @@ def load_dataset(data_path: str, strategy):
         dataset=dataset,
         max_sequence_length=args.max_sequence_length
     )
-    dataset = dataset.skip(263000)
     dataset = dataset.batch(args.batch_size)
     dataset = dataset.prefetch(tf.data.AUTOTUNE)
 
@@ -197,10 +280,10 @@ def main():
     parser.add_argument("--checkpoint-path", type=str, default="gs://openqa-dpr/checkpoints/reader/baseline")
     parser.add_argument("--disable-tf-function", type=eval, default=False)
     parser.add_argument("--max-answer-length", type=int, default=10)
-    parser.add_argument("--res-dir", type=str, default="results/reader/baseline")
+    parser.add_argument("--res-dir", type=str, default="results/reader")
 
     global args
-    args = parser.parse_args([])
+    args = parser.parse_args()
     args_dict = args.__dict__
     checkpoint_type = os.path.basename(args.checkpoint_path)
     args_dict['res_dir'] = os.path.join(args_dict['res_dir'], checkpoint_type)

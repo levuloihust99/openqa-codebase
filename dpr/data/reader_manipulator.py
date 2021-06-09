@@ -534,7 +534,9 @@ def transform_to_reader_validate_dataset(
         filtered_sequence_ids = tf.gather_nd(sequence_ids, filtered_idxs)
         filtered_sequence_ids = filtered_sequence_ids[:, :max_sequence_length]
         filtered_sequence_ids = tf.pad(filtered_sequence_ids, [[0, 0], [0, max_sequence_length - tf.shape(filtered_sequence_ids)[1]]])
+        filtered_sequence_ids = tf.reshape(filtered_sequence_ids, [-1, max_sequence_length])
         filtered_passage_offset = tf.gather_nd(passage_offset, filtered_idxs)
+        filtered_passage_offset = tf.reshape(filtered_passage_offset, [-1])
 
         answers = tf.expand_dims(answers, axis=0)
         answers = tf.tile(answers, multiples=[tf.shape(filtered_passage_offset)[0]])
@@ -563,7 +565,7 @@ def transform_to_endtoend_validate_dataset(
 ):
     def _map(element):
         answers = element['answers']
-        question = element['question']
+        question = element['question'][0]
         sequence_ids = element['passages/sequence_ids']
         passage_offset = element['passages/passage_offset']
 
@@ -571,10 +573,10 @@ def transform_to_endtoend_validate_dataset(
         sequence_ids = sequence_ids[:max_passages]
         sequence_ids = sequence_ids[:, :max_sequence_length]
         sequence_ids = tf.pad(sequence_ids, [[0, 0], [0, max_sequence_length - tf.shape(sequence_ids)[1]]])
+        sequence_ids = tf.reshape(sequence_ids, [-1, max_sequence_length])
         passage_offset = passage_offset[:max_passages]
+        passage_offset = tf.reshape(passage_offset, [-1])
         
-        answers = tf.io.serialize_tensor(answers)
-
         return {
             "answers": answers,
             "question": question,

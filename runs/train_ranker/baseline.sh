@@ -32,5 +32,5 @@ python train_ranker.py \
     --tpu $run_tpu \
     --pretrained-model bert-base-uncased \
     --load-optimizer True \
-    --max-to-keep 20 \
+    --max-to-keep 100 \
     --use-pooler False

@@ -47,10 +47,15 @@ def spread_samples_equally(global_batch_size, num_replicas, base_replica_batch_s
     if global_batch_size < init_batch_size:
         return [global_batch_size], -1, -1
 
+    flag = False
     while global_batch_size < base_replica_batch_size * num_replicas:
         base_replica_batch_size = base_replica_batch_size // 2
         if base_replica_batch_size == 0:
+            flag = True
             break
+    
+    if flag:
+        return [global_batch_size], -1, -1
 
     remainder = global_batch_size - base_replica_batch_size * num_replicas
     return [base_replica_batch_size] * num_replicas, remainder, base_replica_batch_size

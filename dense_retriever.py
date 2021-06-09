@@ -259,6 +259,9 @@ def generate_embeddings(
                             global_batch_outputs = tf.concat([global_batch_outputs, *per_replica_outputs.values], axis=0)
                         else:
                             global_batch_outputs = tf.concat([global_batch_outputs, per_replica_outputs], axis=0)
+                    
+                    if global_batch_size == 0:
+                        break
 
                 else:
                     question = {
