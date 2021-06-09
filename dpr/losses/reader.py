@@ -12,9 +12,7 @@ class ReaderLossCalculator():
             target: [batch_size] or [batch_size, passages_per_sample] (one hot)
         """
         # convert to onehot
-        if tf.rank(target) == 1:
-            target = tf.one_hot(target, depth=tf.shape(rank_logits)[1])
-        return self.loss_fn(target, rank_logits)
+        return self.cross_entropy(target, rank_logits)
 
     def compute_token_loss(
         self,

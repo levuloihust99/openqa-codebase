@@ -70,7 +70,7 @@ def main():
     """
     Data pipeline
     """
-    dataset = reader_manipulator.load_tfrecord_reader_dev_data(
+    dataset = reader_manipulator.load_tfrecord_reader_train_data(
         input_path=args.data_path
     )
     dataset = reader_manipulator.transform_to_ranker_train_dataset(
@@ -80,6 +80,7 @@ def main():
     )
     dataset = dataset.cache()
     dataset = dataset.shuffle(buffer_size=70000)
+    dataset = dataset.repeat()
     dataset = dataset.batch(args.batch_size)
     dataset = dataset.prefetch(tf.data.AUTOTUNE)
 
@@ -141,7 +142,10 @@ def main():
         def step_fn(element):
             """The computation to be run on each compute device"""
             input_ids = element['input_ids']
+            input_ids = tf.reshape(input_ids, [-1, args.max_sequence_length])
             attention_mask = tf.cast(input_ids > 0, dtype=tf.int32)
+            target_integers = tf.zeros([args.batch_size], dtype=tf.int32)
+            target_onehot = tf.one_hot(target_integers, depth=args.num_passages)
 
             with tf.GradientTape() as tape:
                 rank_logits = ranker(
@@ -151,11 +155,10 @@ def main():
                 )
 
                 rank_logits = tf.reshape(rank_logits, [args.batch_size, -1])
-                target = tf.zeros(shape=[args.batch_size], dtype=tf.int32)
 
-                loss = loss_calculator.compute_token_loss(
+                loss = loss_calculator.compute_rank_loss(
                     rank_logits=rank_logits,
-                    target=target
+                    target=target_onehot
                 )
 
                 loss = tf.nn.compute_average_loss(loss, global_batch_size=args.batch_size * strategy.num_replicas_in_sync)

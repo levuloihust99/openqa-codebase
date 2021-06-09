@@ -318,6 +318,17 @@ def transform_to_ranker_train_dataset(
         negative_idxs = tf.random.shuffle(tf.range(tf.shape(negative_sequence_ids)[0], dtype=tf.int32))[:num_passages - 1]
         negative_idxs = tf.expand_dims(negative_idxs, axis=1)
         selected_negative_sequence_ids = tf.gather_nd(negative_sequence_ids, indices=negative_idxs)
+
+        if tf.shape(selected_negative_sequence_ids)[0] < num_passages - 1:
+            single_sequence_ids = tf.expand_dims(selected_negative_sequence_ids[-1], axis=0)
+            added_sequence_ids = tf.tile(single_sequence_ids, multiples=[num_passages - 1 - tf.shape(selected_negative_sequence_ids)[0], 1])
+            selected_negative_sequence_ids = tf.concat(
+                [
+                    selected_negative_sequence_ids,
+                    added_sequence_ids
+                ],
+                axis=0
+            )
         
         # concat positive and negative
         sequence_ids = tf.concat(
