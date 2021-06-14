@@ -41,6 +41,7 @@ def main():
     parser.add_argument("--tokenizer", type=str, default="bert-base-uncased")
     parser.add_argument("--pretrained-model", type=str, default=const.PRETRAINED_MODEL)
     parser.add_argument("--within-size", type=int, default=8)
+    parser.add_argument("--prefix", type=str, default='pretrained')
 
     args = parser.parse_args()
     args_dict = args.__dict__
@@ -70,7 +71,12 @@ def main():
             strategy = tf.distribute.get_strategy()
 
     tf.random.set_seed(args.seed)
-    tokenizer = BertTokenizer.from_pretrained(args.tokenizer)
+
+    if 'prefix' in args:
+        tokenizer_path = os.path.join(args.prefix, args.tokenizer)
+        pretrained_model_path = os.path.join(args.prefix, args.pretrained_model)
+
+    tokenizer = BertTokenizer.from_pretrained(tokenizer_path)
 
     """Data pipeline
     1. Load retriever data (in `.tfrecord` format, stored serialized `tf.int32` tensor)
@@ -123,7 +129,7 @@ def main():
     Set up for distributed training
     """
     config = BertConfig.from_pretrained(
-        args.pretrained_model,
+        pretrained_model_path,
         output_attentions=False,
         output_hidden_states=False,
         use_cache=False,
@@ -134,14 +140,14 @@ def main():
     with strategy.scope():
         # Instantiate question encoder
         question_encoder = TFBertModel.from_pretrained(
-            args.pretrained_model,
+            pretrained_model_path,
             config=config,
             trainable=args.question_encoder_trainable,
         )
 
         # Instantiate context encoder
         context_encoder = TFBertModel.from_pretrained(
-            args.pretrained_model,
+            pretrained_model_path,
             config=config,
             trainable=args.ctx_encoder_trainable,
         )

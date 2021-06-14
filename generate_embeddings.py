@@ -7,6 +7,7 @@ from datetime import datetime
 
 import tensorflow as tf
 from transformers import BertConfig, TFBertModel
+from transformers.utils.dummy_pt_objects import PretrainedBartModel
 
 from dpr import const
 from dpr.data import biencoder_manipulator
@@ -201,6 +202,7 @@ def main():
     parser.add_argument("--pretrained-model", type=str, default=const.PRETRAINED_MODEL)
     parser.add_argument("--use-pooler", type=eval, default=True)
     parser.add_argument("--disable-tf-function", type=eval, default=False)
+    parser.add_argument("--prefix", type=str, default='pretraineds')
 
     global args
     args = parser.parse_args()
@@ -216,6 +218,9 @@ def main():
 
     config_path = "configs/{}/{}/config.yml".format(__file__.rstrip(".py"), datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     write_config(config_path, args_dict)
+
+    if 'prefix' in args:
+        pretrained_model_path = os.path.join(args.prefix, args.pretrained_model)
 
     try: # detect TPUs
         resolver = tf.distribute.cluster_resolver.TPUClusterResolver(tpu=args.tpu) # TPU detection
@@ -256,7 +261,7 @@ def main():
     """
     print("Loading checkpoint...")
     config = BertConfig.from_pretrained(
-        args.pretrained_model,
+        pretrained_model_path,
         output_attentions=False,
         output_hidden_states=False,
         use_cache=False,
@@ -266,7 +271,7 @@ def main():
 
     with strategy.scope():
         context_encoder = TFBertModel.from_pretrained(
-            args.pretrained_model,
+            pretrained_model_path,
             config=config,
             trainable=False
         )
