@@ -54,7 +54,7 @@ def validate(
         return tensors[start : end]
 
     processes = ProcessPool(processes=os.cpu_count())
-    tokenizer = BertTokenizer.from_pretrained("bert-base-uncased")
+    tokenizer = BertTokenizer.from_pretrained(pretrained_model_path)
     get_best_span_partial = partial(get_best_span, max_answer_length=args.max_answer_length, tokenizer=tokenizer)
         
     iterator = iter(dataset)
@@ -225,7 +225,7 @@ def load_checkpoint(
     print("Loading checkpoint... ")
 
     config = BertConfig.from_pretrained(
-        pretrained_model,
+        pretrained_model_path,
         output_attentions=False,
         output_hidden_states=False,
         use_cache=False,
@@ -234,7 +234,7 @@ def load_checkpoint(
 
     with strategy.scope():
         encoder = TFBertModel.from_pretrained(
-            pretrained_model,
+            pretrained_model_path,
             config=config,
             trainable=False
         )
@@ -281,6 +281,8 @@ def main():
     parser.add_argument("--disable-tf-function", type=eval, default=False)
     parser.add_argument("--max-answer-length", type=int, default=10)
     parser.add_argument("--res-dir", type=str, default="results/reader")
+    parser.add_argument("--pretrained-model", type=str, default='bert-base-uncased')
+    parser.add_argument("--prefix", type=str, default='pretrained')
 
     global args
     args = parser.parse_args()
@@ -297,6 +299,10 @@ def main():
     config_path = "configs/{}/{}/config.yml".format(os.path.basename(__file__).rstrip(".py"), datetime.now().strftime("%Y-%m-%d %H-%M-%S"))
     write_config(config_path, args_dict)
 
+    if 'prefix' in args:
+        global pretrained_model_path
+        pretrained_model_path = os.path.join(args.prefix, args.pretrained_model)
+
     try: # detect TPUs
         resolver = tf.distribute.cluster_resolver.TPUClusterResolver(tpu=args.tpu) # TPU detection
         tf.config.experimental_connect_to_cluster(resolver)
@@ -312,7 +318,7 @@ def main():
 
     dataset = load_dataset(data_path=args.data_path, strategy=strategy)
     reader = load_checkpoint(
-        pretrained_model=args.pretrained_model,
+        pretrained_model=pretrained_model_path,
         checkpoint_path=args.checkpoint_path,
         strategy=strategy
     )

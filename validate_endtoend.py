@@ -311,6 +311,7 @@ def main():
     parser.add_argument("--use-pooler", type=eval, default=False)
     parser.add_argument("--disable-tf-function", type=eval, default=False)
     parser.add_argument("--res-dir", type=str, default="results/endtoend/baseline")
+    parser.add_argument("--prefix", type=str, default='pretrained')
 
     global args
     args = parser.parse_args()
@@ -325,6 +326,10 @@ def main():
     config_path = "configs/{}/{}/config.yml".format(os.path.basename(__file__).rstrip(".py"), datetime.now().strftime("%Y-%m-%d %H-%M-%S"))
     write_config(config_path, args_dict)
 
+    if 'prefix' in args:
+        global pretrained_model_path
+        pretrained_model_path = os.path.join(args.prefix, args.pretrained_model)
+ 
     try: # detect TPUs
         resolver = tf.distribute.cluster_resolver.TPUClusterResolver(tpu=args.tpu) # TPU detection
         tf.config.experimental_connect_to_cluster(resolver)
@@ -346,7 +351,7 @@ def main():
     )
 
     ranker, reader = load_checkpoint(
-        pretrained_model=args.pretrained_model,
+        pretrained_model=pretrained_model_path,
         ranker_checkpoint_path=args.ranker_checkpoint_path,
         reader_checkpoint_path=args.reader_checkpoint_path,
         strategy=strategy

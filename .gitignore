@@ -10,3 +10,4 @@ __pycache__/
 /debug.py
 /test_losses.py
 /test_TFBertModel.py
+/pretrained

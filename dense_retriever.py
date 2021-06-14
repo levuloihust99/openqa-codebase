@@ -71,7 +71,7 @@ def load_checkpoint(checkpoint_path, strategy):
     print("Loading checkpoint... ")
 
     config = BertConfig.from_pretrained(
-        args.pretrained_model,
+        pretrained_model_path,
         output_attentions=False,
         output_hidden_states=False,
         use_cache=False,
@@ -80,7 +80,7 @@ def load_checkpoint(checkpoint_path, strategy):
 
     with strategy.scope():
         question_encoder = TFBertModel.from_pretrained(
-            args.pretrained_model,
+            pretrained_model_path,
             config=config,
             trainable=False
         )
@@ -423,6 +423,7 @@ def main():
     parser.add_argument("--disable-tf-function", type=eval, default=False)
     parser.add_argument("--tpu", type=str, default=const.TPU_NAME)
     parser.add_argument("--use-pooler", type=eval, default=True)
+    parser.add_argument("--prefix", type=str, default='pretrained')
 
     global args
     args = parser.parse_args()
@@ -438,6 +439,10 @@ def main():
 
     config_path = "configs/{}/{}/config.yml".format(__file__.rstrip(".py"), datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     write_config(config_path, args_dict)
+
+    if 'prefix' in args:
+        global pretrained_model_path
+        pretrained_model_path = os.path.join(args.prefix, args.pretrained_model)
 
     index_path = os.path.join(args.index_path, model_type)
     if not os.path.exists(index_path):
@@ -467,7 +472,7 @@ def main():
     indexer = create_or_retrieve_indexer(index_path=index_path, embeddings_path=embeddings_path)
     question_encoder = load_checkpoint(checkpoint_path=args.checkpoint_path, strategy=strategy)
     questions, answers = load_qas_test_data()
-    tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+    tokenizer = BertTokenizer.from_pretrained(pretrained_model_path)
     dataset = prepare_dataset(
         args.qas_tfrecord_path,
         strategy=strategy,

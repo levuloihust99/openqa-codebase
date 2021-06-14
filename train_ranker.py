@@ -49,6 +49,9 @@ def main():
     config_path = "configs/{}/{}/config.yml".format(os.path.basename(__file__).rstrip(".py"), datetime.now().strftime("%Y-%m-%d %H-%M-%S"))
     write_config(config_path, args_dict)
 
+    if 'prefix' in args:
+        pretrained_model_path = os.path.join(args.prefix, args.pretrained_model)
+
     """
     Set up devices
     """
@@ -96,7 +99,7 @@ def main():
     Set up for distributed training
     """
     config = BertConfig.from_pretrained(
-        args.pretrained_model,
+        pretrained_model_path,
         output_attentions=False,
         output_hidden_states=False,
         use_cache=False,
@@ -106,7 +109,7 @@ def main():
     steps_per_epoch = args.train_data_size // (args.batch_size * strategy.num_replicas_in_sync)
     with strategy.scope():
         encoder = TFBertModel.from_pretrained(
-            args.pretrained_model,
+            pretrained_model_path,
             config=config,
             trainable=True
         )
