@@ -8,12 +8,14 @@ from transformers import BertTokenizer
 import argparse
 
 from .. import const
+from dpr.models import get_tokenizer
 
 
 def build_tfrecord_text_data_from_jsonl(
     input_path: str,
     out_dir: str,
     records_per_file: int = 5000,
+    num_hard_negatives: int = 7,
 ):
     def _record_generator():
         reader = open(input_path, "r")
@@ -37,8 +39,8 @@ def build_tfrecord_text_data_from_jsonl(
             if len(positive_ctxs) != 1:
                 continue
 
-            hard_negative_ctxs = record['hard_negative_ctxs'][:7]
-            if len(hard_negative_ctxs) != 7:
+            hard_negative_ctxs = record['hard_negative_ctxs'][:num_hard_negatives]
+            if len(hard_negative_ctxs) != num_hard_negatives:
                 continue
 
             positive_ctxs_texts = [ctx['text'].encode(errors='ignore') for ctx in positive_ctxs]
@@ -90,16 +92,19 @@ def build_tfrecord_int_data_from_tfrecord_text_data(
     tokenizer,
     records_per_file=5000,
     shuffle: bool =  True,
-    shuffle_seed: int = 123
+    shuffle_seed: int = 123,
+    num_hard_negatives: int = 7
 ):
     text_dataset = load_retriever_tfrecord_text_data(
         input_path=input_path,
         shuffle=shuffle,
-        shuffle_seed=shuffle_seed
+        shuffle_seed=shuffle_seed,
+        num_hard_negatives=num_hard_negatives
     )
     int_dataset = transform_retriever_data_from_text_to_int(
         dataset=text_dataset,
-        tokenizer=tokenizer
+        tokenizer=tokenizer,
+        num_hard_negatives=num_hard_negatives
     )
 
     def _serialize(element):
@@ -147,9 +152,10 @@ def build_tfrecord_int_data_from_tfrecord_text_data(
 def load_retriever_tfrecord_text_data(
     input_path: str,
     shuffle: bool = True,
-    shuffle_seed: int = 123
+    shuffle_seed: int = 123,
+    num_hard_negatives: int = 7
 ):
-    dataset = tf.data.Dataset.list_files("{}/*".format(input_path), shuffle=shuffle, seed=shuffle_seed)
+    dataset = tf.data.Dataset.list_files("{}/*.tfrecord".format(input_path), shuffle=shuffle, seed=shuffle_seed)
     dataset = dataset.interleave(
         lambda dat: tf.data.TFRecordDataset(dat),
         num_parallel_calls=tf.data.AUTOTUNE,
@@ -160,8 +166,8 @@ def load_retriever_tfrecord_text_data(
         'question': tf.io.FixedLenFeature([1,], tf.string),
         'positive_ctxs/text': tf.io.FixedLenFeature([1,], tf.string),
         'positive_ctxs/title': tf.io.FixedLenFeature([1,], tf.string),
-        'hard_negative_ctxs/text': tf.io.FixedLenFeature([7,], tf.string),
-        'hard_negative_ctxs/title': tf.io.FixedLenFeature([7,], tf.string)
+        'hard_negative_ctxs/text': tf.io.FixedLenFeature([num_hard_negatives,], tf.string),
+        'hard_negative_ctxs/title': tf.io.FixedLenFeature([num_hard_negatives,], tf.string)
     }
 
     def _parse_example(example_proto):
@@ -180,7 +186,7 @@ def load_retriever_tfrecord_int_data(
     shuffle: bool = True,
     shuffle_seed: int = 123
 ):
-    dataset = tf.data.Dataset.list_files("{}/*".format(input_path), shuffle=shuffle, seed=shuffle_seed)
+    dataset = tf.data.Dataset.list_files("{}/*.tfrecord".format(input_path), shuffle=shuffle, seed=shuffle_seed)
     dataset = dataset.interleave(
         lambda dat: tf.data.TFRecordDataset(dat),
         num_parallel_calls=tf.data.AUTOTUNE,
@@ -230,7 +236,8 @@ def load_retriever_tfrecord_int_data(
 
 def transform_retriever_data_from_text_to_int(
     dataset: tf.data.Dataset,
-    tokenizer
+    tokenizer,
+    num_hard_negatives: int = 7
 ):
     def _transform_ctx_to_tensor(ctx):
         title = ctx[0]
@@ -273,7 +280,7 @@ def transform_retriever_data_from_text_to_int(
         output_signature={
             'question_tensor': tf.SparseTensorSpec([None], dtype=tf.int32),
             'positive_tensor': tf.SparseTensorSpec([None], dtype=tf.int32),
-            'hard_negative_tensor': tf.SparseTensorSpec([7, None], dtype=tf.int32)
+            'hard_negative_tensor': tf.SparseTensorSpec([num_hard_negatives, None], dtype=tf.int32)
         }
     )
 
@@ -322,10 +329,12 @@ def build_tfrecord_tokenized_data_for_ctx_sources(
     ctx_source_path: str,
     out_dir: str,
     max_context_length: int = 256,
-    shard_size: int = 42031
+    shard_size: int = 42031,
+    prefix=None
 ):
-    tokenizer = BertTokenizer.from_pretrained(pretrained_model)
-    ctx_source_files = ["{}/psgs_subset_{:02d}.tsv".format(ctx_source_path, i) for i in range(17)]
+    tokenizer = get_tokenizer(model_name=pretrained_model, prefix=prefix)
+    ctx_source_files = glob.glob("{}/*.tsv".format(ctx_source_path))
+    ctx_source_files.sort()
     text_dataset = None
     for ctx_source in ctx_source_files:
         df = pd.read_csv(ctx_source, sep="\t", header=None, names=['id', 'text', 'title'])
@@ -530,8 +539,9 @@ def build_tfrecord_tokenized_data_for_qas_ver2(
     pretrained_model: str,
     qas_path: str,
     out_dir: str,
+    prefix
 ):
-    tokenizer = BertTokenizer.from_pretrained(pretrained_model)
+    tokenizer = get_tokenizer(model_name=pretrained_model, prefix=prefix)
     text_dataset = tf.data.TextLineDataset(qas_path)
 
     def _transform():
@@ -630,6 +640,30 @@ def main():
 
     args = parser.parse_args()
     # TODO: build tfrecord dataset
+    # build_tfrecord_text_data_from_jsonl(
+    #     input_path="data/retriever/vi-covid-train.jsonl",
+    #     out_dir="data/retriever",
+    #     records_per_file=5000,
+    #     num_hard_negatives=1
+    # )
+
+
+    # build_tfrecord_int_data_from_tfrecord_text_data(
+    #     input_path='data/retriever',
+    #     out_dir="data/retriever",
+    #     tokenizer=get_tokenizer(model_name='NlpHUST/vibert4news-base-cased', prefix='pretrained'),
+    #     shuffle=True,
+    #     shuffle_seed=123,
+    #     num_hard_negatives=1
+    # )
+    build_tfrecord_tokenized_data_for_ctx_sources(
+        pretrained_model="NlpHUST/vibert4news-base-cased",
+        ctx_source_path="data/retriever",
+        out_dir="data/retriever",
+        max_context_length=256,
+        shard_size=42031,
+        prefix='pretrained'
+    )
     
 
 if __name__ == "__main__":

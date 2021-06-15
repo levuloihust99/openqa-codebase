@@ -87,7 +87,7 @@ def json_to_jsonline(input_path: str, output_path: str, chunk_size=1024**3):
         brace_pair_positions = list(zip(brace_start_positions, brace_end_positions))
         for start, end in brace_pair_positions:
             json_record = bytes_read_accumulate[start : end] 
-            writer.write(json.dumps(eval(json_record)))
+            writer.write(json.dumps(eval(json_record), ensure_ascii=False))
             writer.write("\n")
         
         count += len(brace_pair_positions)
@@ -179,9 +179,14 @@ def benchmark(dataset: tf.data.Dataset):
 
 
 if __name__ == "__main__":
-    split_ctx_sources(
-        file_path="data/wikipedia_split/psgs_subset.tsv",
-        out_dir="data/wikipedia_split/shards-42031",
-        chunk_size=1024**2,
-        lines_per_file=42031, skip_header_row=True
+    # split_ctx_sources(
+    #     file_path="data/wikipedia_split/psgs_subset.tsv",
+    #     out_dir="data/wikipedia_split/shards-42031",
+    #     chunk_size=1024**2,
+    #     lines_per_file=42031, skip_header_row=True
+    # )
+
+    json_to_jsonline(
+        input_path="data/retriever/vi-covid-train.json",
+        output_path="data/retriever/vi-covid-train.jsonl"
     )

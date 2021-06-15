@@ -147,7 +147,8 @@ def main():
     print(configs_string)
     print("----------------------------------------------------------------------------------------------------------------------")
 
-    config_path = "configs/{}/{}/config.yml".format(__file__.rstrip(".py"), datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    file_name = os.path.basename(__file__)
+    config_path = "configs/{}/{}/config.yml".format(file_name.rstrip(".py"), datetime.now().strftime("%Y-%m-%d %H-%M-%S"))
     write_config(config_path, args_dict)
 
     epochs = args.epochs
@@ -158,7 +159,7 @@ def main():
         tf.config.experimental_connect_to_cluster(resolver)
         tf.tpu.experimental.initialize_tpu_system(resolver)
         strategy = tf.distribute.TPUStrategy(resolver)
-    except ValueError: # detect GPUs
+    except Exception: # detect GPUs
         devices = tf.config.list_physical_devices("GPU")
         # [tf.config.experimental.set_memory_growth(device, True) for device in devices]
         if devices:
