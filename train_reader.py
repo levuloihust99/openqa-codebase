@@ -11,6 +11,7 @@ from dpr.data import reader_manipulator
 from utilities import write_config
 from dpr import models, optimizers
 from dpr.losses.reader import ReaderLossCalculator
+from dpr.models import get_config, get_encoder, get_tokenizer
 
 
 def main():
@@ -48,9 +49,6 @@ def main():
 
     config_path = "configs/{}/{}/config.yml".format(os.path.basename(__file__).rstrip(".py"), datetime.now().strftime("%Y-%m-%d %H-%M-%S"))
     write_config(config_path, args_dict)
-
-    if 'prefix' in args:
-        pretrained_model_path = os.path.join(args.prefix, args.pretrained_model)
 
     """
     Set up devices
@@ -99,20 +97,14 @@ def main():
     """
     Set up for distributed training
     """
-    config = BertConfig.from_pretrained(
-        pretrained_model_path,
-        output_attentions=False,
-        output_hidden_states=False,
-        use_cache=False,
-        return_dict=True
-    )
-
     steps_per_epoch = args.train_data_size // (args.batch_size * strategy.num_replicas_in_sync)
+    config = get_config(model_name=args.pretrained_model, prefix=args.prefix)
     with strategy.scope():
-        encoder = TFBertModel.from_pretrained(
-            pretrained_model_path,
-            config=config,
-            trainable=True
+        encoder = get_encoder(
+            model_name=args.pretrained_model,
+            args=args,
+            trainable=True,
+            prefix=args.prefix
         )
         encoder.bert.pooler.trainable = False
 

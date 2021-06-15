@@ -7,10 +7,11 @@ from datetime import datetime
 
 import tensorflow as tf
 from transformers import BertConfig, TFBertModel
-from transformers.utils.dummy_pt_objects import PretrainedBartModel
+from bigbird.core import modeling
 
 from dpr import const
 from dpr.data import biencoder_manipulator
+from dpr.models import get_encoder, get_tokenizer, get_model_input
 from utilities import write_config, spread_samples_equally, spread_samples_greedy
 
 
@@ -25,18 +26,14 @@ def run(
     strategy,
     out_dir: str
 ):
-    def eval_step(element):
+    def eval_step(inputs):
         """The step function for one training step"""
         print("This function is tracing !")
 
-        def step_fn(element):
+        def step_fn(inputs):
             """The computation to be run on each compute device"""
-            context_ids = element['context_ids']
-            context_masks = element['context_masks']
-
             outputs = context_encoder(
-                input_ids=context_ids,
-                attention_mask=context_masks,
+                **inputs,
                 training=False
             )
 
@@ -45,7 +42,7 @@ def run(
                 pooled_output = seq_output[:, 0, :]
             return pooled_output
             
-        per_replica_outputs = strategy.run(step_fn, args=(element,))
+        per_replica_outputs = strategy.run(step_fn, args=(inputs,))
         return per_replica_outputs
 
     if not args.disable_tf_function:
@@ -106,10 +103,11 @@ def run(
                     dist_context_ids = strategy.experimental_distribute_values_from_function(value_fn_for_context_ids)
                     dist_context_masks = strategy.experimental_distribute_values_from_function(value_fn_for_context_masks)
 
-                    element = {
-                        'context_ids': dist_context_ids,
-                        'context_masks': dist_context_masks,
-                    }
+                    element = get_model_input(
+                        input_ids=dist_context_ids,
+                        atttention_mask=dist_context_masks,
+                        model_name=args.pretrained_model
+                    )
 
                     per_replica_outputs = eval_step(element)
                     if global_batch_outputs is None:
@@ -127,10 +125,11 @@ def run(
                         break
 
                 else:
-                    element = {
-                        'context_ids': reduced_context_ids,
-                        'context_masks': reduced_context_masks,
-                    }
+                    element = get_model_input(
+                        input_ids=reduced_context_ids,
+                        attention_mask=reduced_context_masks,
+                        model_name=args.pretrained_model
+                    )
 
                     per_replica_outputs = eval_step(element)
 
@@ -148,6 +147,12 @@ def run(
                     break
 
         else:
+            element = get_model_input(
+                input_ids=element['context_ids'],
+                attention_mask=element['context_masks'],
+                model_name=args.pretrained_model
+            )
+
             per_replica_outputs = eval_step(element) # Run on TPU
 
             if strategy.num_replicas_in_sync > 1:
@@ -219,9 +224,6 @@ def main():
     config_path = "configs/{}/{}/config.yml".format(__file__.rstrip(".py"), datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     write_config(config_path, args_dict)
 
-    if 'prefix' in args:
-        pretrained_model_path = os.path.join(args.prefix, args.pretrained_model)
-
     try: # detect TPUs
         resolver = tf.distribute.cluster_resolver.TPUClusterResolver(tpu=args.tpu) # TPU detection
         tf.config.experimental_connect_to_cluster(resolver)
@@ -260,26 +262,20 @@ def main():
     Load checkpoint
     """
     print("Loading checkpoint...")
-    config = BertConfig.from_pretrained(
-        pretrained_model_path,
-        output_attentions=False,
-        output_hidden_states=False,
-        use_cache=False,
-        return_dict=True
-    )
     checkpoint_path = args.checkpoint_path
-
     with strategy.scope():
-        context_encoder = TFBertModel.from_pretrained(
-            pretrained_model_path,
-            config=config,
-            trainable=False
+        context_encoder = get_encoder(
+            model_name=args.pretrained_model,
+            args=args,
+            trainable=False,
+            prefix=args.prefix
         )
 
         retriever = tf.train.Checkpoint(ctx_model=context_encoder)
         root_ckpt = tf.train.Checkpoint(model=retriever)
 
         root_ckpt.restore(tf.train.latest_checkpoint(checkpoint_path)).expect_partial()
+    
     print(tf.train.latest_checkpoint(checkpoint_path))
 
     print("done")

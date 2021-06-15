@@ -1,7 +1,7 @@
 import tensorflow as tf
 
 from typing import List
-from . import const
+from .. import const
 
 
 class InBatchDPRLoss():

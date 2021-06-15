@@ -3,7 +3,6 @@ import os
 import pickle
 import glob
 import sys
-from tensorflow.python.data.util.structure import NoneTensor
 from tqdm import tqdm
 import argparse
 from datetime import datetime
@@ -24,6 +23,7 @@ from dpr import const
 from dpr.utils.qa_validation import calculate_matches
 from dpr.data import biencoder_manipulator
 from utilities import write_config, spread_samples_greedy, spread_samples_equally
+from dpr.models import get_encoder, get_tokenizer, get_model_input
 
 
 def create_or_retrieve_indexer(index_path, embeddings_path):
@@ -70,19 +70,12 @@ def create_or_retrieve_indexer(index_path, embeddings_path):
 def load_checkpoint(checkpoint_path, strategy):
     print("Loading checkpoint... ")
 
-    config = BertConfig.from_pretrained(
-        pretrained_model_path,
-        output_attentions=False,
-        output_hidden_states=False,
-        use_cache=False,
-        return_dict=True,
-    )
-
     with strategy.scope():
-        question_encoder = TFBertModel.from_pretrained(
-            pretrained_model_path,
-            config=config,
-            trainable=False
+        question_encoder = get_encoder(
+            model_name=args.pretrained_model_path,
+            args=args,
+            trainable=False,
+            prefix=args.prefix
         )
 
         retriever = tf.train.Checkpoint(question_model=question_encoder)
@@ -114,37 +107,6 @@ def load_qas_test_data():
     return questions, answers
 
 
-def transform_to_tensors(
-    dataset: tf.data.Dataset,
-    tokenizer: BertTokenizer,
-    max_query_length: int = 256,
-):
-
-    def _generate():
-        for element in dataset:
-            query = element.numpy().decode('utf-8')
-            tokens = tokenizer.encode(query)
-
-            ids = tokenizer.convert_tokens_to_ids(tokens)
-            ids = tf.constant(ids)
-            ids = tf.pad(tokens, [[0, max_query_length]])[:max_query_length]
-            ids = tf.tensor_scatter_nd_update(ids, indices=[[max_query_length - 1]], updates=[tokenizer.sep_token_id])
-            mask = tf.cast(ids > 0, tf.int32)
-
-            yield {
-                'question_ids': ids,
-                'question_masks': mask,
-            }
-
-    return tf.data.Dataset.from_generator(
-        _generate,
-        output_signature={
-            'question_ids': tf.TensorSpec([max_query_length], dtype=tf.int32),
-            'question_masks': tf.TensorSpec([max_query_length], dtype=tf.int32),
-        }
-    )
-
-
 def prepare_dataset(qas_tfrecord_path, strategy, tokenizer, max_query_length: int = 256):
     print("Preparing dataset for inference... ", end="")
     sys.stdout.flush()
@@ -169,19 +131,15 @@ def generate_embeddings(
     dataset,
     strategy
 ):
-    def dist_step(element):
+    def dist_step(inputs):
         """The step function for one feed forward step"""
         if not args.disable_tf_function:
             print("This function is tracing !")
 
-        def step_fn(element):
+        def step_fn(inputs):
             """The computation to be run on each compute device"""
-            input_ids = element['question_ids']
-            attention_mask = element['question_masks']
-
             outputs = question_encoder(
-                input_ids=input_ids,
-                attention_mask=attention_mask,
+                **inputs,
                 training=False
             )
 
@@ -191,7 +149,7 @@ def generate_embeddings(
                 pooled_output = seq_output[:, 0, :]
             return pooled_output
     
-        per_replica_outputs = strategy.run(step_fn, args=(element,))
+        per_replica_outputs = strategy.run(step_fn, args=(inputs,))
         return per_replica_outputs
     
     if not args.disable_tf_function:
@@ -244,10 +202,10 @@ def generate_embeddings(
                     dist_input_ids = strategy.experimental_distribute_values_from_function(value_fn_for_input_ids)
                     dist_attention_mask = strategy.experimental_distribute_values_from_function(value_fn_for_attention_mask)
 
-                    question = {
-                        "question_ids": dist_input_ids,
-                        "question_masks": dist_attention_mask
-                    }
+                    question = get_model_input(
+                        input_ids=dist_input_ids,
+                        attention_mask=dist_attention_mask
+                    )
                     per_replica_outputs = dist_step(question)
                     if global_batch_outputs is None:
                         if strategy.num_replicas_in_sync > 1:
@@ -264,10 +222,10 @@ def generate_embeddings(
                         break
 
                 else:
-                    question = {
-                        'question_ids': reduced_input_ids,
-                        'question_masks': reduced_attention_mask
-                    }
+                    question = get_model_input(
+                        input_ids=reduced_input_ids,
+                        attention_mask=reduced_attention_mask
+                    )
 
                     per_replica_outputs = dist_step(question)
 
@@ -472,7 +430,7 @@ def main():
     indexer = create_or_retrieve_indexer(index_path=index_path, embeddings_path=embeddings_path)
     question_encoder = load_checkpoint(checkpoint_path=args.checkpoint_path, strategy=strategy)
     questions, answers = load_qas_test_data()
-    tokenizer = BertTokenizer.from_pretrained(pretrained_model_path)
+    tokenizer = get_tokenizer(model_name=args.pretrained_model, prefix=args.prefix)
     dataset = prepare_dataset(
         args.qas_tfrecord_path,
         strategy=strategy,

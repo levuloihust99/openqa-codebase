@@ -1,6 +1,7 @@
 import tensorflow as tf
 
 from transformers import TFBertModel, BertTokenizer, BertConfig
+from bigbird.core import modeling
 
 import os
 import argparse
@@ -9,9 +10,101 @@ from tqdm import tqdm
 from datetime import datetime
 import copy
 
-from dpr import const, models, losses, optimizers
+from dpr import const, models, optimizers
+from dpr.models import get_encoder, get_tokenizer
+from dpr.losses import biencoder
 from dpr.data import biencoder_manipulator
 from utilities import write_config
+
+
+def dist_bert(element):
+    """The step function for one training step"""
+    print("This function is tracing !")
+
+    def step_fn(element):
+        """The computation to be run on each compute device"""
+        question_ids = element['question']
+        question_masks = tf.cast(question_ids > 0, tf.int32)
+        question_inputs = {
+            'input_ids': question_ids,
+            'attention_mask': question_masks
+        }
+        contexts = element['contexts']
+        context_ids = tf.reshape(contexts, [-1, tf.shape(contexts)[-1]])
+        context_masks = tf.cast(context_ids > 0, tf.int32)
+        context_inputs = {
+            'input_ids': context_ids,
+            'attention_mask': context_masks
+        }
+
+        with tf.GradientTape() as tape:
+            q_tensors, ctx_tensors = retriever(
+                question_inputs=question_inputs,
+                context_inputs=context_inputs,
+                training=True
+            )
+            loss = loss_fn(q_tensors, ctx_tensors)
+            loss = tf.nn.compute_average_loss(loss, global_batch_size=args.batch_size * strategy.num_replicas_in_sync)
+
+        grads = tape.gradient(loss, retriever.trainable_weights)
+        grads = [tf.clip_by_norm(g, args.max_grad_norm) for g in grads]
+        optimizer.apply_gradients(zip(grads, retriever.trainable_weights))
+
+        return loss
+
+    per_replica_losses = strategy.run(step_fn, args=(element,))
+    return strategy.reduce(tf.distribute.ReduceOp.SUM, per_replica_losses, axis=None)
+    
+
+def dist_bigbird(element):
+    """The step function for one training step"""
+    print("This function is tracing !")
+
+    def step_fn(element):
+        """The computation to be run on each compute device"""
+        question_ids = element['question']
+        question_masks = tf.cast(question_ids > 0, tf.int32)
+        question_inputs = {
+            'input_ids': question_ids,
+            'attention_mask': question_masks
+        }
+        contexts = element['contexts']
+        context_ids = tf.reshape(contexts, [-1, tf.shape(contexts)[-1]])
+        context_inputs = {
+            'input_ids': context_ids
+        }
+
+        with tf.GradientTape() as tape:
+            q_tensors, ctx_tensors = retriever(
+                question_inputs=question_inputs,
+                context_inputs=context_inputs,
+                training=True
+            )
+            loss = loss_fn(q_tensors, ctx_tensors)
+            loss = tf.nn.compute_average_loss(loss, global_batch_size=args.batch_size * strategy.num_replicas_in_sync)
+
+        grads = tape.gradient(loss, retriever.trainable_weights)
+        grads = [tf.clip_by_norm(g, args.max_grad_norm) for g in grads]
+        optimizer.apply_gradients(zip(grads, retriever.trainable_weights))
+
+        return loss
+
+    per_replica_losses = strategy.run(step_fn, args=(element,))
+    return strategy.reduce(tf.distribute.ReduceOp.SUM, per_replica_losses, axis=None)
+
+
+def get_dist_train_step(
+    model_name: str = 'bert-base-uncased'
+):
+    # return tf.function(dist_train_func[model_name])
+    return tf.function(dist_train_func[model_name])
+
+
+dist_train_func = {
+    'bert-base-uncased': dist_bert,
+    'bigbird': dist_bigbird,
+    'NlpHUST/vibert4news-base-cased': dist_bert
+}
 
 
 def main():
@@ -39,10 +132,12 @@ def main():
     parser.add_argument("--use-pooler", type=eval, default=True)
     parser.add_argument("--load-optimizer", type=eval, default=True)
     parser.add_argument("--tokenizer", type=str, default="bert-base-uncased")
-    parser.add_argument("--pretrained-model", type=str, default=const.PRETRAINED_MODEL)
+    parser.add_argument("--question-pretrained-model", type=str, default='bert-base-uncased')
+    parser.add_argument("--context-pretrained-model", type=str, default='bigbird')
     parser.add_argument("--within-size", type=int, default=8)
-    parser.add_argument("--prefix", type=str, default='pretrained')
+    parser.add_argument("--prefix", type=str, default=None)
 
+    global args
     args = parser.parse_args()
     args_dict = args.__dict__
 
@@ -57,6 +152,7 @@ def main():
 
     epochs = args.epochs
 
+    global strategy
     try: # detect TPUs
         resolver = tf.distribute.cluster_resolver.TPUClusterResolver(tpu=args.tpu) # TPU detection
         tf.config.experimental_connect_to_cluster(resolver)
@@ -72,11 +168,7 @@ def main():
 
     tf.random.set_seed(args.seed)
 
-    if 'prefix' in args:
-        tokenizer_path = os.path.join(args.prefix, args.tokenizer)
-        pretrained_model_path = os.path.join(args.prefix, args.pretrained_model)
-
-    tokenizer = BertTokenizer.from_pretrained(tokenizer_path)
+    tokenizer = get_tokenizer(model_name=args.tokenizer, prefix=args.prefix)
 
     """Data pipeline
     1. Load retriever data (in `.tfrecord` format, stored serialized `tf.int32` tensor)
@@ -128,33 +220,26 @@ def main():
     """
     Set up for distributed training
     """
-    config = BertConfig.from_pretrained(
-        pretrained_model_path,
-        output_attentions=False,
-        output_hidden_states=False,
-        use_cache=False,
-        return_dict=True,
-    )
-
     steps_per_epoch = args.train_data_size // (args.batch_size * strategy.num_replicas_in_sync)
+    global optimizer
+    global loss_fn
+    global retriever
     with strategy.scope():
         # Instantiate question encoder
-        question_encoder = TFBertModel.from_pretrained(
-            pretrained_model_path,
-            config=config,
+        question_encoder = get_encoder(
+            model_name=args.question_pretrained_model,
+            args=args,
             trainable=args.question_encoder_trainable,
+            prefix=args.prefix
         )
 
         # Instantiate context encoder
-        context_encoder = TFBertModel.from_pretrained(
-            pretrained_model_path,
-            config=config,
+        context_encoder = get_encoder(
+            model_name=args.context_pretrained_model,
+            args=args,
             trainable=args.ctx_encoder_trainable,
+            prefix=args.prefix
         )
-
-        if not args.use_pooler:
-            question_encoder.bert.pooler.trainable = False
-            context_encoder.bert.pooler.trainable = False
 
         retriever = models.BiEncoder(
             question_model=question_encoder,
@@ -176,54 +261,25 @@ def main():
 
         # Define loss function
         if args.loss_fn == 'threelevel':
-            loss_fn = losses.biencoder.ThreeLevelDPRLoss(batch_size=args.batch_size, within_size=args.within_size)
+            loss_fn = biencoder.ThreeLevelDPRLoss(batch_size=args.batch_size, within_size=args.within_size)
         elif args.loss_fn == 'twolevel':
-            loss_fn = losses.biencoder.TwoLevelDPRLoss(batch_size=args.batch_size, within_size=args.within_size)
+            loss_fn = biencoder.TwoLevelDPRLoss(batch_size=args.batch_size, within_size=args.within_size)
         elif args.loss_fn == "hardnegvsneg":
-            loss_fn = losses.biencoder.HardNegVsNegDPRLoss(batch_size=args.batch_size, within_size=args.within_size)
+            loss_fn = biencoder.HardNegVsNegDPRLoss(batch_size=args.batch_size, within_size=args.within_size)
         elif args.loss_fn == 'hardnegvsnegsoftmax':
-            loss_fn = losses.biencoder.HardNegVsNegSoftMaxDPRLoss(batch_size=args.batch_size, within_size=args.within_size)
+            loss_fn = biencoder.HardNegVsNegSoftMaxDPRLoss(batch_size=args.batch_size, within_size=args.within_size)
         elif args.loss_fn == 'threelevelsoftmax':
-            loss_fn = losses.biencoder.ThreeLevelSoftMaxDPRLoss(batch_size=args.batch_size, within_size=args.within_size)
+            loss_fn = biencoder.ThreeLevelSoftMaxDPRLoss(batch_size=args.batch_size, within_size=args.within_size)
         else:
-            loss_fn = losses.biencoder.InBatchDPRLoss(batch_size=args.batch_size)
+            loss_fn = biencoder.InBatchDPRLoss(batch_size=args.batch_size)
 
 
     """
     Distributed train step
     """
-    @tf.function
-    def dist_train_step(element):
-        """The step function for one training step"""
-        print("This function is tracing !")
-
-        def step_fn(element):
-            """The computation to be run on each compute device"""
-            question_ids = element['question']
-            question_masks = tf.cast(question_ids > 0, tf.int32)
-            contexts = element['contexts']
-            context_ids = tf.reshape(contexts, [-1, tf.shape(contexts)[-1]])
-            context_masks = tf.cast(context_ids > 0, tf.int32)
-
-            with tf.GradientTape() as tape:
-                q_tensors, ctx_tensors = retriever(
-                    question_ids=question_ids,
-                    question_masks=question_masks,
-                    context_ids=context_ids,
-                    context_masks=context_masks,
-                    training=True
-                )
-                loss = loss_fn(q_tensors, ctx_tensors)
-                loss = tf.nn.compute_average_loss(loss, global_batch_size=args.batch_size * strategy.num_replicas_in_sync)
-
-            grads = tape.gradient(loss, retriever.trainable_weights)
-            grads = [tf.clip_by_norm(g, args.max_grad_norm) for g in grads]
-            optimizer.apply_gradients(zip(grads, retriever.trainable_weights))
-
-            return loss
-
-        per_replica_losses = strategy.run(step_fn, args=(element,))
-        return strategy.reduce(tf.distribute.ReduceOp.SUM, per_replica_losses, axis=None)
+    dist_train_step = get_dist_train_step(
+        model_name=args.context_pretrained_model
+    )
 
 
     """
