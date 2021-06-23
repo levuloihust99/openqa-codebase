@@ -11,3 +11,4 @@ __pycache__/
 /test_losses.py
 /test_TFBertModel.py
 /pretrained
+/finals/

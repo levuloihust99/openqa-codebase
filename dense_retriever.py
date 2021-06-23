@@ -40,8 +40,11 @@ def create_or_retrieve_indexer(index_path, embeddings_path):
 
         print("Load and embed vectors... ")
         # Load embeddings
-        ctx_embedding_path_pattern = "{}/wikipedia_passages_{{}}.pkl".format(embeddings_path)
-        embedding_files = [ctx_embedding_path_pattern.format(i) for i in range(17)]
+        # ctx_embedding_path_pattern = "{}/wikipedia_passages_{{}}.pkl".format(embeddings_path)
+        # embedding_files = [ctx_embedding_path_pattern.format(i) for i in range(4)]
+        ctx_embedding_path_pattern = "{}/wikipedia_passages_*.pkl".format(embeddings_path)
+        embedding_files = glob.glob(ctx_embedding_path_pattern)
+        embedding_files.sort()
 
         # Index data
         indexer.init_index(vector_sz=768)
@@ -72,7 +75,7 @@ def load_checkpoint(checkpoint_path, strategy):
 
     with strategy.scope():
         question_encoder = get_encoder(
-            model_name=args.pretrained_model_path,
+            model_name=args.pretrained_model,
             args=args,
             trainable=False,
             prefix=args.prefix
@@ -398,22 +401,6 @@ def main():
     config_path = "configs/{}/{}/config.yml".format(__file__.rstrip(".py"), datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     write_config(config_path, args_dict)
 
-    if 'prefix' in args:
-        global pretrained_model_path
-        pretrained_model_path = os.path.join(args.prefix, args.pretrained_model)
-
-    index_path = os.path.join(args.index_path, model_type)
-    if not os.path.exists(index_path):
-        os.makedirs(index_path)
-
-    reader_data_path = os.path.join(args.reader_data_path, model_type, "reader_data.json")
-    if not os.path.exists(os.path.dirname(reader_data_path)):
-        os.makedirs(os.path.dirname(reader_data_path))
-
-    top_k_hits_path = os.path.join(args.result_path, model_type, "top_k_hits.txt")
-    if not os.path.exists(os.path.dirname(top_k_hits_path)):
-        os.makedirs(os.path.dirname(top_k_hits_path))
-
     try: # detect TPUs
         resolver = tf.distribute.cluster_resolver.TPUClusterResolver(tpu=args.tpu) # TPU detection
         tf.config.experimental_connect_to_cluster(resolver)
@@ -427,7 +414,11 @@ def main():
         else:
             strategy = tf.distribute.get_strategy()
 
+    index_path = os.path.join(args.index_path, model_type)
+    if not os.path.exists(index_path):
+        os.makedirs(index_path)
     indexer = create_or_retrieve_indexer(index_path=index_path, embeddings_path=embeddings_path)
+    exit(0) # only create index
     question_encoder = load_checkpoint(checkpoint_path=args.checkpoint_path, strategy=strategy)
     questions, answers = load_qas_test_data()
     tokenizer = get_tokenizer(model_name=args.pretrained_model, prefix=args.prefix)
@@ -442,6 +433,10 @@ def main():
     all_docs = load_ctx_sources()
 
     print("Validating... ")
+    top_k_hits_path = os.path.join(args.result_path, model_type, "top_k_hits.txt")
+    if not os.path.exists(os.path.dirname(top_k_hits_path)):
+        os.makedirs(os.path.dirname(top_k_hits_path))
+
     start_time = time.perf_counter()
     questions_doc_hits = validate(
         top_ids_and_scores=top_ids_and_scores,
@@ -453,6 +448,9 @@ def main():
     print("----------------------------------------------------------------------------------------------------------------------")
 
     print("Generating reader data... ")
+    reader_data_path = os.path.join(args.reader_data_path, model_type, "reader_data.json")
+    if not os.path.exists(os.path.dirname(reader_data_path)):
+        os.makedirs(os.path.dirname(reader_data_path))
     start_time = time.perf_counter()
     save_results(
         questions=questions,

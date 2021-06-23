@@ -105,7 +105,7 @@ def run(
 
                     element = get_model_input(
                         input_ids=dist_context_ids,
-                        atttention_mask=dist_context_masks,
+                        attention_mask=dist_context_masks,
                         model_name=args.pretrained_model
                     )
 
@@ -207,7 +207,7 @@ def main():
     parser.add_argument("--pretrained-model", type=str, default=const.PRETRAINED_MODEL)
     parser.add_argument("--use-pooler", type=eval, default=True)
     parser.add_argument("--disable-tf-function", type=eval, default=False)
-    parser.add_argument("--prefix", type=str, default='pretraineds')
+    parser.add_argument("--prefix", type=str, default='pretrained')
 
     global args
     args = parser.parse_args()

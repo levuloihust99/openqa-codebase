@@ -641,29 +641,29 @@ def main():
     args = parser.parse_args()
     # TODO: build tfrecord dataset
     # build_tfrecord_text_data_from_jsonl(
-    #     input_path="data/retriever/vi-covid-train.jsonl",
-    #     out_dir="data/retriever",
+    #     input_path="data/retriever/V2/vicovid-train.jsonl",
+    #     out_dir="data/retriever/V2/TEXT",
     #     records_per_file=5000,
     #     num_hard_negatives=1
     # )
 
 
-    # build_tfrecord_int_data_from_tfrecord_text_data(
-    #     input_path='data/retriever',
-    #     out_dir="data/retriever",
-    #     tokenizer=get_tokenizer(model_name='NlpHUST/vibert4news-base-cased', prefix='pretrained'),
-    #     shuffle=True,
-    #     shuffle_seed=123,
-    #     num_hard_negatives=1
-    # )
-    build_tfrecord_tokenized_data_for_ctx_sources(
-        pretrained_model="NlpHUST/vibert4news-base-cased",
-        ctx_source_path="data/retriever",
-        out_dir="data/retriever",
-        max_context_length=256,
-        shard_size=42031,
-        prefix='pretrained'
+    build_tfrecord_int_data_from_tfrecord_text_data(
+        input_path='data/retriever/V2/TEXT',
+        out_dir="data/retriever/V2/INT",
+        tokenizer=get_tokenizer(model_name='NlpHUST/vibert4news-base-cased', prefix='pretrained'),
+        shuffle=True,
+        shuffle_seed=123,
+        num_hard_negatives=1
     )
+    # build_tfrecord_tokenized_data_for_ctx_sources(
+    #     pretrained_model="NlpHUST/vibert4news-base-cased",
+    #     ctx_source_path="data/retriever",
+    #     out_dir="data/retriever",
+    #     max_context_length=256,
+    #     shard_size=42031,
+    #     prefix='pretrained'
+    # )
     
 
 if __name__ == "__main__":

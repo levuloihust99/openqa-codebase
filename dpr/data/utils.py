@@ -186,7 +186,12 @@ if __name__ == "__main__":
     #     lines_per_file=42031, skip_header_row=True
     # )
 
+    # json_to_jsonline(
+    #     input_path="data/retriever/vi-covid-train.json",
+    #     output_path="data/retriever/vi-covid-train.jsonl"
+    # )
+
     json_to_jsonline(
-        input_path="data/retriever/vi-covid-train.json",
-        output_path="data/retriever/vi-covid-train.jsonl"
+        input_path="data/retriever/V2/vicovid-train.json",
+        output_path="data/retriever/V2/vicovid-train.jsonl"
     )
