@@ -2,8 +2,8 @@
 cd ~/openqa-codebase
 python dense_retriever.py \
     --batch-size 1024 \
-    --checkpoint-path gs://openqa-dpr/checkpoints/retriever/vicovid/vicovid_inbatch_batch8_query64_gradnorm3 \
-    --ctx-source-path data/wikipedia_split/V2/vicovid_ctx_sources.tsv \
+    --checkpoint-path gs://openqa-dpr/checkpoints/retriever/vicovid/vicovid_inbatch_batch8_query64_gradnorm3_V3 \
+    --ctx-source-path data/wikipedia_split/V3/vicovid/vicovid_ctx_sources_V3.tsv \
     --disable-tf-function False \
     --embeddings-path data/retriever_results \
     --force-create-index True \
