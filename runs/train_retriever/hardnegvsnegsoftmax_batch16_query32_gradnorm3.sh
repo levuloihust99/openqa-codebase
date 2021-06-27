@@ -32,7 +32,10 @@ python train_retriever.py \
     --ctx-encoder-trainable True \
     --question-encoder-trainable True \
     --tpu $run_tpu \
-    --pretrained-model bert-base-uncased \
+    --tokenizer bert-base-uncased \
+    --question-pretrained-model bert-base-uncased \
+    --context-pretrained-model bert-base-uncased \
+    --prefix pretrained \
     --loss-fn hardnegvsnegsoftmax \
     --use-pooler False \
     --tokenizer bert-base-uncased \
