@@ -207,7 +207,8 @@ def generate_embeddings(
 
                     question = get_model_input(
                         input_ids=dist_input_ids,
-                        attention_mask=dist_attention_mask
+                        attention_mask=dist_attention_mask,
+                        model_name=args.pretrained_model
                     )
                     per_replica_outputs = dist_step(question)
                     if global_batch_outputs is None:
@@ -227,7 +228,8 @@ def generate_embeddings(
                 else:
                     question = get_model_input(
                         input_ids=reduced_input_ids,
-                        attention_mask=reduced_attention_mask
+                        attention_mask=reduced_attention_mask,
+                        model_name=args.pretrained_model
                     )
 
                     per_replica_outputs = dist_step(question)
@@ -418,7 +420,7 @@ def main():
     if not os.path.exists(index_path):
         os.makedirs(index_path)
     indexer = create_or_retrieve_indexer(index_path=index_path, embeddings_path=embeddings_path)
-    exit(0) # only create index
+    # exit(0) # only create index
     question_encoder = load_checkpoint(checkpoint_path=args.checkpoint_path, strategy=strategy)
     questions, answers = load_qas_test_data()
     tokenizer = get_tokenizer(model_name=args.pretrained_model, prefix=args.prefix)

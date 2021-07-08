@@ -16,7 +16,7 @@ class BiEncoder(keras.Model):
         self,
         question_model: tf.keras.Model,
         ctx_model: tf.keras.Model,
-        use_pooler: True,
+        use_pooler=False,
         **kwargs
     ):
         super(BiEncoder, self).__init__(**kwargs)
